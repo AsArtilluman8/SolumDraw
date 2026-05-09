@@ -3,6 +3,7 @@ package com.solum.draw;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -32,7 +33,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 02B started");
+        RuntimeLog.line("boot", "SolumDraw Patch 03C started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -43,7 +44,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(14f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw Patch 02B: safe image import + diagnostics");
+        status.setText("SolumDraw Patch 03C: fitted preview coordinates");
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -126,7 +127,8 @@ public final class MainActivity extends Activity {
             return;
         }
         String planInfo = currentPlan == null ? "no plan" : "plan actions=" + currentPlan.actions.size();
-        String text = lastImageInfo.summary() + " | " + planInfo + " | " + RuntimeLog.memory();
+        Rect rect = previewView.currentImageRect();
+        String text = lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + " | " + planInfo + " | " + RuntimeLog.memory();
         status.setText(text);
         RuntimeLog.line("image_info", text);
     }
@@ -139,9 +141,10 @@ public final class MainActivity extends Activity {
         }
 
         try {
-            RuntimeLog.line("build_plan", "start mode=" + mode.name() + " bitmap=" + sourceImage.getWidth() + "x" + sourceImage.getHeight());
-            int width = Math.max(1, previewView.getWidth());
-            int height = Math.max(1, previewView.getHeight());
+            Rect imageRect = previewView.currentImageRect();
+            RuntimeLog.line("build_plan", "start mode=" + mode.name() + " bitmap=" + sourceImage.getWidth() + "x" + sourceImage.getHeight() + " preview=" + imageRect.width() + "x" + imageRect.height());
+            int width = Math.max(1, imageRect.width());
+            int height = Math.max(1, imageRect.height());
             long start = System.currentTimeMillis();
             currentPlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
             long ms = System.currentTimeMillis() - start;
@@ -171,7 +174,7 @@ public final class MainActivity extends Activity {
         }
 
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch02b.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch03c.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
