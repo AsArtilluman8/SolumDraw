@@ -20,6 +20,7 @@ public final class ImageAnalyzer {
         int h = small.getHeight();
         int n = Math.max(1, w * h);
         AnalysisLayers layers = AnalysisLayers.build(source);
+        UiLayoutAnalysis ui = UiLayoutAnalysis.analyze(source);
 
         Map<Integer, Integer> colorBins = new HashMap<>();
         long edgeSum = 0;
@@ -65,7 +66,7 @@ public final class ImageAnalyzer {
         float detailDensity = clamp01(detailSum / (float) (n * 170));
         float skinRatio = skinLike / (float) n;
         float oldTextRatio = oldTextLike / (float) n;
-        float realTextRatio = layers.realTextScore;
+        float realTextRatio = Math.max(layers.realTextScore, ui.isUiScreenshot ? Math.min(0.45f, ui.textScore * 0.45f) : 0f);
         float glyphRatio = layers.glyphScore;
         float logoScore = layers.logoScore;
         float darkRatio = dark / (float) n;
@@ -79,14 +80,14 @@ public final class ImageAnalyzer {
         String genre = detectGenre(edgeDensity, detailDensity, skinRatio, realTextRatio, glyphRatio, logoScore, avgSat,
                 palette.size(), paletteCompactness, darkRatio, brightRatio, whitePaperRatio, blackInkRatio,
                 layers.centralObjectRatio, layers.symmetryVertical, layers.componentCount, layers.textComponentCount,
-                layers.textLineCount, layers.largeComponentCount, layers.largestComponentRatio);
+                layers.textLineCount, layers.largeComponentCount, layers.largestComponentRatio, ui);
         float confidence = confidenceFor(genre, edgeDensity, detailDensity, skinRatio, realTextRatio, glyphRatio,
                 logoScore, avgSat, paletteCompactness, whitePaperRatio, layers.symmetryVertical,
-                layers.textLineCount, layers.largestComponentRatio);
-        String strategy = strategyFor(genre, edgeDensity, detailDensity, logoScore, realTextRatio);
+                layers.textLineCount, layers.largestComponentRatio, ui);
+        String strategy = strategyFor(genre, edgeDensity, detailDensity, logoScore, realTextRatio, ui);
         String warnings = warningsFor(edgeDensity, detailDensity, skinRatio, realTextRatio, oldTextRatio, glyphRatio,
                 logoScore, paletteCompactness, whitePaperRatio, layers.componentCount, layers.textComponentCount,
-                layers.textLineCount, layers.largeComponentCount);
+                layers.textLineCount, layers.largeComponentCount, ui);
 
         return new ImageAnalysis(name, source.getWidth(), source.getHeight(), w, h, genre, confidence,
                 edgeDensity, detailDensity, skinRatio, oldTextRatio, avgSat, avgBright,
@@ -115,7 +116,12 @@ public final class ImageAnalyzer {
     private static String detectGenre(float edge, float detail, float skin, float realText, float glyph, float logo,
             float sat, int colors, float compact, float dark, float bright, float paper, float ink,
             float centralObject, float symmetry, int compCount, int textCompCount, int textLineCount,
-            int largeCompCount, float largestCompRatio) {
+            int largeCompCount, float largestCompRatio, UiLayoutAnalysis ui) {
+        boolean uiStrong = ui.isUiScreenshot && ui.uiScore > 0.42f;
+        boolean engineUi = uiStrong && (ui.subgenre.equals("game_engine_editor_overlay") || (ui.sceneScore > 0.20f && ui.panelScore > 0.20f));
+        if (engineUi) return "game_engine_ui";
+        if (uiStrong) return "ui_screenshot";
+
         boolean realTextStrong = textLineCount >= 2 && textCompCount >= 12 && realText > 0.18f;
         boolean oneLogoLike = logo > 0.34f && largestCompRatio > 0.015f && largeCompCount >= 1 && textLineCount <= 1 && skin < 0.08f;
         boolean centralGlyph = glyph > 0.34f && centralObject > 0.16f && textLineCount <= 1 && skin < 0.08f;
@@ -135,9 +141,11 @@ public final class ImageAnalyzer {
     }
 
     private static float confidenceFor(String genre, float edge, float detail, float skin, float text, float glyph,
-            float logo, float sat, float compact, float paper, float symmetry, int textLineCount, float largestCompRatio) {
+            float logo, float sat, float compact, float paper, float symmetry, int textLineCount, float largestCompRatio,
+            UiLayoutAnalysis ui) {
         float c;
-        if (genre.equals("ui_or_text_heavy")) c = 0.48f + Math.min(0.36f, text * 0.90f + textLineCount * 0.06f);
+        if (genre.equals("game_engine_ui") || genre.equals("ui_screenshot")) c = 0.56f + Math.min(0.38f, ui.uiScore * 0.34f + ui.panelScore * 0.18f + ui.toolbarScore * 0.14f + ui.textScore * 0.10f);
+        else if (genre.equals("ui_or_text_heavy")) c = 0.48f + Math.min(0.36f, text * 0.90f + textLineCount * 0.06f);
         else if (genre.equals("portrait_or_skin_photo")) c = 0.50f + Math.min(0.35f, skin * 1.7f);
         else if (genre.equals("logo_icon_flat")) c = 0.48f + Math.min(0.42f, logo * 0.55f + glyph * 0.30f + compact * 0.18f + symmetry * 0.12f + largestCompRatio * 0.80f);
         else if (genre.equals("vector_flat_art")) c = 0.50f + Math.min(0.35f, compact + sat * 0.25f);
@@ -148,7 +156,9 @@ public final class ImageAnalyzer {
         return clamp01(c);
     }
 
-    private static String strategyFor(String genre, float edge, float detail, float logo, float text) {
+    private static String strategyFor(String genre, float edge, float detail, float logo, float text, UiLayoutAnalysis ui) {
+        if (genre.equals("game_engine_ui")) return "scene_viewport -> top_hud -> side_panels -> bottom_toolbar -> gizmo/icons -> text_labels -> brush_cursor -> polish";
+        if (genre.equals("ui_screenshot")) return "background -> layout_panels -> cards/buttons -> icons -> verified_text -> polish";
         if (genre.equals("ui_or_text_heavy")) return "background_blocks -> panels -> verified_text_components -> icons -> polish";
         if (genre.equals("portrait_or_skin_photo")) return "background -> silhouette -> skin_mass -> hair_clothes -> face_details -> polish";
         if (genre.equals("logo_icon_flat")) return "background_shape -> glow/accent_mass -> main_symbol_component -> inner_cuts -> crisp_edges -> highlights -> polish";
@@ -162,8 +172,10 @@ public final class ImageAnalyzer {
     }
 
     private static String warningsFor(float edge, float detail, float skin, float realText, float oldText, float glyph,
-            float logo, float compact, float paper, int compCount, int textCompCount, int textLineCount, int largeCompCount) {
+            float logo, float compact, float paper, int compCount, int textCompCount, int textLineCount, int largeCompCount,
+            UiLayoutAnalysis ui) {
         StringBuilder b = new StringBuilder();
+        if (ui.isUiScreenshot) b.append("ui/layout screenshot candidate: ").append(ui.summary()).append("; ");
         if (realText > 0.16f && textLineCount >= 2) b.append("verified text rows; ");
         if (oldText > 0.12f && (textLineCount <= 1 || textCompCount < 12) && glyph > 0.20f) b.append("edge rows look like glyph/symbol, not real text; ");
         if (logo > 0.34f || glyph > 0.34f) b.append("logo/symbol candidate; ");
