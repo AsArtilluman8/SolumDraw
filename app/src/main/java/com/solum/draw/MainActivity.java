@@ -6,12 +6,13 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.MediaStore;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import com.solum.draw.debug.CrashLogger;
+import com.solum.draw.debug.RuntimeLog;
+import com.solum.draw.image.SafeBitmapLoader;
 import com.solum.draw.planner.DrawMode;
 import com.solum.draw.planner.HumanStrokePlanner;
 import com.solum.draw.planner.StrokePlan;
@@ -26,10 +27,12 @@ public final class MainActivity extends Activity {
     private TextView status;
     private StrokePreviewView previewView;
     private Bitmap sourceImage;
+    private SafeBitmapLoader.Result lastImageInfo;
     private StrokePlan currentPlan;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
+        RuntimeLog.line("boot", "SolumDraw Patch 02B started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -40,19 +43,21 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(14f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw Patch 02A: crash log + human stroke foundation");
+        status.setText("SolumDraw Patch 02B: safe image import + diagnostics");
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setPadding(8, 8, 8, 8);
 
         Button importButton = button("Import");
+        Button infoButton = button("Info");
         Button printerButton = button("Printer");
-        Button fastButton = button("Human fast");
+        Button fastButton = button("Fast");
         Button naturalButton = button("Natural");
         Button exportButton = button("Export");
 
         bar.addView(importButton);
+        bar.addView(infoButton);
         bar.addView(printerButton);
         bar.addView(fastButton);
         bar.addView(naturalButton);
@@ -65,6 +70,7 @@ public final class MainActivity extends Activity {
         setContentView(root);
 
         importButton.setOnClickListener(v -> pickImage());
+        infoButton.setOnClickListener(v -> showImageInfo());
         printerButton.setOnClickListener(v -> buildPlan(DrawMode.PRINTER_DEBUG));
         fastButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_FAST));
         naturalButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_NATURAL));
@@ -74,14 +80,15 @@ public final class MainActivity extends Activity {
     private Button button(String text) {
         Button button = new Button(this);
         button.setText(text);
-        button.setTextSize(11f);
+        button.setTextSize(10f);
         button.setAllCaps(false);
-        button.setPadding(4, 2, 4, 2);
+        button.setPadding(2, 2, 2, 2);
         button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         return button;
     }
 
     private void pickImage() {
+        RuntimeLog.line("ui", "pick image requested");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("image/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -95,40 +102,63 @@ public final class MainActivity extends Activity {
                 Uri uri = data.getData();
                 if (uri == null) {
                     status.setText("Import failed: empty image uri");
+                    RuntimeLog.line("image_import", "empty uri");
                     return;
                 }
-                sourceImage = MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
+                lastImageInfo = SafeBitmapLoader.load(getContentResolver(), uri);
+                sourceImage = lastImageInfo.bitmap;
                 previewView.setSourceImage(sourceImage);
                 currentPlan = null;
                 previewView.setPlan(null);
-                status.setText("Image loaded: " + sourceImage.getWidth() + "x" + sourceImage.getHeight());
+                status.setText("Image: " + lastImageInfo.summary() + " | " + RuntimeLog.memory());
             } catch (Exception e) {
                 CrashLogger.logHandledError("image_import", e);
+                RuntimeLog.error("image_import", e);
                 status.setText("Import failed: " + e.getMessage());
             }
         }
     }
 
+    private void showImageInfo() {
+        if (lastImageInfo == null) {
+            status.setText("No image loaded. " + RuntimeLog.memory());
+            RuntimeLog.line("image_info", "no image loaded");
+            return;
+        }
+        String planInfo = currentPlan == null ? "no plan" : "plan actions=" + currentPlan.actions.size();
+        String text = lastImageInfo.summary() + " | " + planInfo + " | " + RuntimeLog.memory();
+        status.setText(text);
+        RuntimeLog.line("image_info", text);
+    }
+
     private void buildPlan(DrawMode mode) {
         if (sourceImage == null) {
             status.setText("Import image first.");
+            RuntimeLog.line("build_plan", "blocked: no image");
             return;
         }
 
         try {
+            RuntimeLog.line("build_plan", "start mode=" + mode.name() + " bitmap=" + sourceImage.getWidth() + "x" + sourceImage.getHeight());
             int width = Math.max(1, previewView.getWidth());
             int height = Math.max(1, previewView.getHeight());
+            long start = System.currentTimeMillis();
             currentPlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
+            long ms = System.currentTimeMillis() - start;
             previewView.setPlan(currentPlan);
 
-            status.setText("Plan " + mode.name()
+            String summary = "Plan " + mode.name()
                     + " | actions=" + currentPlan.actions.size()
+                    + " | ms=" + ms
                     + " | Sculptor=" + currentPlan.countStagePrefix("SCULPTOR")
                     + " Potter=" + currentPlan.countStagePrefix("POTTER")
                     + " Grinder=" + currentPlan.countStagePrefix("GRINDER")
-                    + " Polisher=" + currentPlan.countStagePrefix("POLISHER"));
+                    + " Polisher=" + currentPlan.countStagePrefix("POLISHER");
+            status.setText(summary);
+            RuntimeLog.line("build_plan", summary);
         } catch (Exception e) {
             CrashLogger.logHandledError("build_plan_" + mode.name(), e);
+            RuntimeLog.error("build_plan_" + mode.name(), e);
             status.setText("Plan failed: " + e.getMessage());
         }
     }
@@ -136,17 +166,20 @@ public final class MainActivity extends Activity {
     private void exportPlan() {
         if (currentPlan == null) {
             status.setText("Build plan first.");
+            RuntimeLog.line("export_plan", "blocked: no plan");
             return;
         }
 
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch01.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch02b.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
             status.setText("Exported: " + out.getAbsolutePath());
+            RuntimeLog.line("export_plan", "exported " + out.getAbsolutePath());
         } catch (Exception e) {
             CrashLogger.logHandledError("export_plan", e);
+            RuntimeLog.error("export_plan", e);
             status.setText("Export failed: " + e.getMessage());
         }
     }
