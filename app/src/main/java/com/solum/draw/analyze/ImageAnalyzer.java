@@ -78,17 +78,22 @@ public final class ImageAnalyzer {
 
         String genre = detectGenre(edgeDensity, detailDensity, skinRatio, realTextRatio, glyphRatio, logoScore, avgSat,
                 palette.size(), paletteCompactness, darkRatio, brightRatio, whitePaperRatio, blackInkRatio,
-                layers.centralObjectRatio, layers.symmetryVertical);
+                layers.centralObjectRatio, layers.symmetryVertical, layers.componentCount, layers.textComponentCount,
+                layers.textLineCount, layers.largeComponentCount, layers.largestComponentRatio);
         float confidence = confidenceFor(genre, edgeDensity, detailDensity, skinRatio, realTextRatio, glyphRatio,
-                logoScore, avgSat, paletteCompactness, whitePaperRatio, layers.symmetryVertical);
+                logoScore, avgSat, paletteCompactness, whitePaperRatio, layers.symmetryVertical,
+                layers.textLineCount, layers.largestComponentRatio);
         String strategy = strategyFor(genre, edgeDensity, detailDensity, logoScore, realTextRatio);
         String warnings = warningsFor(edgeDensity, detailDensity, skinRatio, realTextRatio, oldTextRatio, glyphRatio,
-                logoScore, paletteCompactness, whitePaperRatio);
+                logoScore, paletteCompactness, whitePaperRatio, layers.componentCount, layers.textComponentCount,
+                layers.textLineCount, layers.largeComponentCount);
 
         return new ImageAnalysis(name, source.getWidth(), source.getHeight(), w, h, genre, confidence,
                 edgeDensity, detailDensity, skinRatio, oldTextRatio, avgSat, avgBright,
                 paletteCompactness, darkRatio, brightRatio, realTextRatio, glyphRatio, logoScore,
                 layers.saliencyDensity, layers.centralObjectRatio, layers.symmetryVertical,
+                layers.componentCount, layers.textComponentCount, layers.textLineCount,
+                layers.largeComponentCount, layers.largestComponentRatio,
                 palette, strategy, warnings);
     }
 
@@ -101,42 +106,42 @@ public final class ImageAnalyzer {
 
     private static List<ColorCount> topColors(Map<Integer, Integer> bins, int total, int maxCount) {
         ArrayList<ColorCount> list = new ArrayList<>();
-        for (Map.Entry<Integer, Integer> e : bins.entrySet()) {
-            list.add(new ColorCount(e.getKey(), e.getValue(), e.getValue() / (float) total));
-        }
-        Collections.sort(list, new Comparator<ColorCount>() {
-            @Override public int compare(ColorCount a, ColorCount b) { return b.count - a.count; }
-        });
+        for (Map.Entry<Integer, Integer> e : bins.entrySet()) list.add(new ColorCount(e.getKey(), e.getValue(), e.getValue() / (float) total));
+        Collections.sort(list, new Comparator<ColorCount>() { @Override public int compare(ColorCount a, ColorCount b) { return b.count - a.count; } });
         if (list.size() > maxCount) return new ArrayList<>(list.subList(0, maxCount));
         return list;
     }
 
     private static String detectGenre(float edge, float detail, float skin, float realText, float glyph, float logo,
             float sat, int colors, float compact, float dark, float bright, float paper, float ink,
-            float centralObject, float symmetry) {
-        if (paper > 0.46f && edge > 0.13f && sat < 0.20f && realText < 0.22f) return "sketch_lineart";
-        if (realText > 0.20f && edge > 0.12f && glyph < 0.45f) return "ui_or_text_heavy";
-        if (logo > 0.42f && centralObject > 0.22f && skin < 0.05f && realText < 0.18f && compact > 0.20f) return "logo_icon_flat";
-        if (glyph > 0.48f && skin < 0.05f && realText < 0.16f && symmetry > 0.32f) return "logo_icon_flat";
-        if (skin > 0.10f && edge < 0.30f) return "portrait_or_skin_photo";
-        if (colors <= 5 && compact > 0.30f && edge > 0.10f && realText < 0.18f) return "logo_icon_flat";
-        if (compact > 0.24f && sat > 0.20f && detail < 0.30f && realText < 0.20f) return "vector_flat_art";
-        if (sat > 0.30f && edge > 0.18f && detail < 0.42f && skin < 0.16f) return "anime_cartoon_flat";
-        if (sat > 0.22f && detail > 0.25f && edge > 0.15f && skin < 0.08f) return "digital_art_wallpaper";
-        if (dark > 0.45f && bright < 0.12f && logo < 0.38f) return "dark_cinematic";
+            float centralObject, float symmetry, int compCount, int textCompCount, int textLineCount,
+            int largeCompCount, float largestCompRatio) {
+        boolean realTextStrong = textLineCount >= 2 && textCompCount >= 12 && realText > 0.18f;
+        boolean oneLogoLike = logo > 0.34f && largestCompRatio > 0.015f && largeCompCount >= 1 && textLineCount <= 1 && skin < 0.08f;
+        boolean centralGlyph = glyph > 0.34f && centralObject > 0.16f && textLineCount <= 1 && skin < 0.08f;
+
+        if (paper > 0.46f && edge > 0.13f && sat < 0.20f && !realTextStrong && textLineCount <= 1) return "sketch_lineart";
+        if (oneLogoLike || centralGlyph || (colors <= 5 && compact > 0.30f && edge > 0.10f && !realTextStrong)) return "logo_icon_flat";
+        if (realTextStrong && glyph < 0.55f) return "ui_or_text_heavy";
+        if (skin > 0.10f && edge < 0.35f) return "portrait_or_skin_photo";
+        if (compact > 0.24f && sat > 0.18f && detail < 0.32f && !realTextStrong) return "vector_flat_art";
+        if (sat > 0.28f && edge > 0.16f && detail < 0.45f && skin < 0.18f && !realTextStrong) return "anime_cartoon_flat";
+        if (sat > 0.22f && detail > 0.22f && edge > 0.13f && skin < 0.10f && !realTextStrong) return "digital_art_wallpaper";
+        if (dark > 0.45f && bright < 0.12f && logo < 0.38f && !centralGlyph) return "dark_cinematic";
         if (edge < 0.12f && detail < 0.18f && logo < 0.35f) return "soft_photo_or_gradient";
-        if (detail > 0.42f) return "detailed_noisy_photo";
+        if (detail > 0.42f && !realTextStrong) return "detailed_noisy_photo";
+        if (realText > 0.12f && textLineCount >= 1 && textCompCount >= 8) return "ui_or_text_heavy";
         return "general_photo_or_illustration";
     }
 
     private static float confidenceFor(String genre, float edge, float detail, float skin, float text, float glyph,
-            float logo, float sat, float compact, float paper, float symmetry) {
-        float c = 0.45f;
-        if (genre.equals("ui_or_text_heavy")) c = 0.52f + Math.min(0.34f, text * 1.2f);
+            float logo, float sat, float compact, float paper, float symmetry, int textLineCount, float largestCompRatio) {
+        float c;
+        if (genre.equals("ui_or_text_heavy")) c = 0.48f + Math.min(0.36f, text * 0.90f + textLineCount * 0.06f);
         else if (genre.equals("portrait_or_skin_photo")) c = 0.50f + Math.min(0.35f, skin * 1.7f);
-        else if (genre.equals("logo_icon_flat")) c = 0.48f + Math.min(0.42f, logo * 0.45f + glyph * 0.25f + compact * 0.25f + symmetry * 0.15f);
-        else if (genre.equals("vector_flat_art")) c = 0.50f + Math.min(0.35f, compact);
-        else if (genre.equals("anime_cartoon_flat") || genre.equals("digital_art_wallpaper")) c = 0.50f + Math.min(0.25f, sat + edge * 0.5f);
+        else if (genre.equals("logo_icon_flat")) c = 0.48f + Math.min(0.42f, logo * 0.55f + glyph * 0.30f + compact * 0.18f + symmetry * 0.12f + largestCompRatio * 0.80f);
+        else if (genre.equals("vector_flat_art")) c = 0.50f + Math.min(0.35f, compact + sat * 0.25f);
+        else if (genre.equals("anime_cartoon_flat") || genre.equals("digital_art_wallpaper")) c = 0.50f + Math.min(0.25f, sat + edge * 0.45f);
         else if (genre.equals("sketch_lineart")) c = 0.50f + Math.min(0.30f, paper + edge * 0.5f);
         else if (genre.equals("detailed_noisy_photo")) c = 0.50f + Math.min(0.25f, detail);
         else c = 0.48f + Math.min(0.18f, edge + detail);
@@ -144,9 +149,9 @@ public final class ImageAnalyzer {
     }
 
     private static String strategyFor(String genre, float edge, float detail, float logo, float text) {
-        if (genre.equals("ui_or_text_heavy")) return "background_blocks -> panels -> real_text_rows -> icons -> polish";
+        if (genre.equals("ui_or_text_heavy")) return "background_blocks -> panels -> verified_text_components -> icons -> polish";
         if (genre.equals("portrait_or_skin_photo")) return "background -> silhouette -> skin_mass -> hair_clothes -> face_details -> polish";
-        if (genre.equals("logo_icon_flat")) return "background_shape -> glow/accent_mass -> main_symbol -> inner_cuts -> crisp_edges -> highlights -> polish";
+        if (genre.equals("logo_icon_flat")) return "background_shape -> glow/accent_mass -> main_symbol_component -> inner_cuts -> crisp_edges -> highlights -> polish";
         if (genre.equals("vector_flat_art")) return "large_flat_shapes -> color_regions -> clean_edges -> accents -> polish";
         if (genre.equals("anime_cartoon_flat")) return "flat_fills -> silhouette -> hair/clothes/skin regions -> contour -> eyes/details -> polish";
         if (genre.equals("sketch_lineart")) return "main_lines -> structure_lines -> cross_details -> cleanup -> polish";
@@ -157,27 +162,21 @@ public final class ImageAnalyzer {
     }
 
     private static String warningsFor(float edge, float detail, float skin, float realText, float oldText, float glyph,
-            float logo, float compact, float paper) {
+            float logo, float compact, float paper, int compCount, int textCompCount, int textLineCount, int largeCompCount) {
         StringBuilder b = new StringBuilder();
-        if (realText > 0.16f) b.append("real text rows; ");
-        if (oldText > 0.12f && realText < 0.12f && glyph > 0.25f) b.append("symbol/glyph edges, not real text; ");
-        if (logo > 0.38f) b.append("logo/symbol candidate; ");
+        if (realText > 0.16f && textLineCount >= 2) b.append("verified text rows; ");
+        if (oldText > 0.12f && (textLineCount <= 1 || textCompCount < 12) && glyph > 0.20f) b.append("edge rows look like glyph/symbol, not real text; ");
+        if (logo > 0.34f || glyph > 0.34f) b.append("logo/symbol candidate; ");
         if (skin > 0.10f) b.append("skin/portrait-like zones; ");
         if (detail > 0.45f) b.append("high detail/noise; ");
         if (compact > 0.42f) b.append("dominant background or flat color; ");
         if (paper > 0.46f) b.append("paper/sketch-like background; ");
         if (edge < 0.08f) b.append("weak edges; ");
-        if (b.length() == 0) return "none";
+        b.append("components=").append(compCount).append(" textCand=").append(textCompCount).append(" textLines=").append(textLineCount).append(" large=").append(largeCompCount).append("; ");
         return b.toString();
     }
 
-    private static boolean isSkinLike(int r, int g, int b) {
-        return r > 75 && g > 40 && b > 25 && r > g && g > b && (r - b) > 35 && Math.abs(r - g) > 10;
-    }
-
-    private static int luma(int c) {
-        return (Color.red(c) * 30 + Color.green(c) * 59 + Color.blue(c) * 11) / 100;
-    }
-
+    private static boolean isSkinLike(int r, int g, int b) { return r > 75 && g > 40 && b > 25 && r > g && g > b && (r - b) > 35 && Math.abs(r - g) > 10; }
+    private static int luma(int c) { return (Color.red(c) * 30 + Color.green(c) * 59 + Color.blue(c) * 11) / 100; }
     private static float clamp01(float v) { return Math.max(0f, Math.min(1f, v)); }
 }
