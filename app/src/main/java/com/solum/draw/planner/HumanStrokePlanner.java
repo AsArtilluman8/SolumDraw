@@ -20,8 +20,6 @@ public final class HumanStrokePlanner {
         Bitmap small = Bitmap.createScaledBitmap(source, SMALL_SIZE, SMALL_SIZE, true);
         List<StrokeAction> actions = new ArrayList<>();
 
-        actions.add(singlePoint("SCULPTOR_BACKGROUND", averageColor(small), 86f, canvasWidth * 0.5f, canvasHeight * 0.5f));
-
         List<ShapeRegion> regions = ShapeExtractor.extract(small, regionLimit(mode));
         Collections.sort(regions, new Comparator<ShapeRegion>() {
             @Override public int compare(ShapeRegion a, ShapeRegion b) {
@@ -118,12 +116,6 @@ public final class HumanStrokePlanner {
         if (mode == DrawMode.PRINTER_DEBUG) return 72;
         if (mode == DrawMode.HUMAN_FAST) return 48;
         return MAX_REGIONS;
-    }
-
-    private static StrokeAction singlePoint(String stage, int color, float size, float x, float y) {
-        List<PointF> path = new ArrayList<>();
-        path.add(new PointF(x, y));
-        return new StrokeAction(stage, color, size, path);
     }
 
     private static int stageRank(ShapeRegion region, int imageWidth, int imageHeight) {
@@ -234,21 +226,6 @@ public final class HumanStrokePlanner {
 
     private static PointF toCanvas(int x, int y, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight) {
         return new PointF((x / (float) imageWidth) * canvasWidth, (y / (float) imageHeight) * canvasHeight);
-    }
-
-    private static int averageColor(Bitmap bitmap) {
-        long r = 0, g = 0, b = 0, n = 0;
-        for (int y = 0; y < bitmap.getHeight(); y += 3) {
-            for (int x = 0; x < bitmap.getWidth(); x += 3) {
-                int c = bitmap.getPixel(x, y);
-                r += Color.red(c);
-                g += Color.green(c);
-                b += Color.blue(c);
-                n++;
-            }
-        }
-        if (n == 0) n = 1;
-        return Color.rgb((int) (r / n), (int) (g / n), (int) (b / n));
     }
 
     private static int soften(int color) {
