@@ -12,124 +12,122 @@ Status: merged.
 
 Goal: every fatal crash should write a readable text report to Download.
 
-Output files:
+## Patch 02B/03A-03F - Import diagnostics and stroke planner foundation
 
-- `solumdraw_last_boot.txt`
-- `solumdraw_crash_YYYYMMDD_HHMMSS.txt`
-- `solumdraw_crash_YYYYMMDD_HHMMSS_handled.txt`
+Status: merged.
 
-## Patch 02B - Image import diagnostics and bitmap guard
+Included:
+
+- safe image import;
+- runtime log;
+- connected color regions;
+- fitted preview coordinates;
+- white canvas preview mode;
+- edge/detail pass;
+- basic Sculptor/Potter/Grinder/Polisher counters.
+
+Current limitation:
+
+- output is still sparse on white canvas;
+- region/edge planning is not enough for near 1:1 reconstruction;
+- the next core must use virtual canvas + error map + residual correction.
+
+## Patch 04A - Donor audit and reconstruction plan
 
 Status: current PR.
 
-Goal: make image import safe before deeper drawing algorithms.
+Goal: stop tuning the wrong mechanism and define the correct reconstruction architecture.
 
-Output files:
+Included documents:
 
-- `solumdraw_runtime_log.txt`
-- `solumdraw_stroke_plan_patch02b.json`
+- `docs/OLD_GARTIC_DONOR_AUDIT.md`
+- `docs/RECONSTRUCTION_ENGINE_PLAN.md`
 
-Included checks:
+## Patch 04B - VirtualCanvas simulator
 
-- Original image size.
-- Decoded image size.
-- Bitmap sample size.
-- Runtime memory summary.
-- Plan build duration.
-
-## Patch 03A - Shape extraction foundation
-
-Status: added to current PR.
-
-Goal: replace coarse palette point sampling with connected color regions.
-
-Included work:
-
-- Quantized color labels.
-- Flood-fill connected region extraction.
-- Region bounds, area, density, and sample points.
-- Stage ranking by region size/density.
-- Planner now emits region-based Sculptor/Potter/Grinder/Polisher actions.
-
-## Patch 03B - Edge and contour pass
-
-Goal: add real edge/outline extraction on top of regions.
+Goal: create an offscreen drawable canvas representing what SolumDraw has already drawn.
 
 Planned work:
 
-- Luma/contrast edge detection.
-- Region border tracing.
-- Face/important-detail priority hints.
-- Separate outline strokes from fill strokes.
+- `TargetImage` wrapper;
+- `VirtualCanvas` bitmap;
+- apply `StrokeAction` to virtual canvas;
+- initial metrics/debug export;
+- no UI overhaul.
 
-## Patch 04 - Sculptor and Potter real passes
+## Patch 04C - ErrorMap v1
 
-Goal: make the early drawing process recognizable and human-like.
-
-Planned work:
-
-- Background and silhouette planning.
-- Large form closure.
-- Region cleanup.
-- Stable proportional pass.
-
-## Patch 05 - Grinder and Polisher real passes
-
-Goal: add details without printer-like behavior.
+Goal: compare target image to virtual canvas.
 
 Planned work:
 
-- Contours.
-- Shadows.
-- Medium details.
-- Highlights.
-- Important feature accents.
+- pixel/cell error;
+- top error zones;
+- debug summary;
+- future candidate scoring input.
 
-## Patch 06 - Humanizer v1
+## Patch 04D - Dense residual pass v1
 
-Goal: reduce printer-like behavior.
+Goal: add real density by drawing where error remains high.
 
 Planned work:
 
-- Variable stroke speed metadata.
-- Human pauses.
-- Imperfect but controlled path wobble.
-- Return-to-detail behavior.
-- Less uniform stroke spacing.
+- residual correction strokes;
+- 300-1500 actions depending on mode;
+- fill missing zones;
+- avoid strict scanline printer behavior.
 
-## Patch 07 - Timeline replay controls
+## Patch 04E - Anti-printer humanizer
+
+Goal: keep residual accuracy while making the route less mechanical.
+
+Planned work:
+
+- group by zone first, color second;
+- delayed return to important zones;
+- varied stroke length/direction;
+- controlled route noise.
+
+## Patch 05 - Tool brain v1
+
+Goal: choose brush/fill/alpha/color intelligently.
+
+Planned work:
+
+- fill for large masses;
+- brush for medium regions;
+- thin line for detail;
+- alpha/opacity metadata.
+
+## Patch 06 - Timeline replay controls
 
 Goal: inspect the drawing order.
 
 Planned work:
 
-- Play and pause.
-- Step forward.
-- Speed slider.
-- Stage filter.
-- Progress counter.
+- play/pause;
+- step forward;
+- speed slider;
+- stage filter;
+- progress counter.
 
-## Patch 08 - Gartic bridge foundation
+## Patch 07 - Gartic bridge foundation
 
 Goal: replay generated stroke plans into a real drawing surface/WebView.
 
 Planned work:
 
-- Canvas target detection.
-- Coordinate mapping.
-- Tool selection abstraction.
-- Brush/fill/color replay.
+- canvas target detection;
+- coordinate mapping;
+- tool selection abstraction;
+- brush/fill/color replay.
 
-## Patch 09 - Tool brain v1
-
-Goal: choose brush/fill/alpha/color intelligently.
-
-## Patch 10 - ML scorer foundation
+## Patch 08 - ML scorer foundation
 
 Goal: make a small model score which next stroke improves the visible result most.
 
 Planned work:
 
-- Dataset export from generated plans.
-- Error/importance map.
-- Small on-device friendly scorer design.
+- dataset export from generated plans;
+- error/importance map;
+- small on-device friendly scorer design.
