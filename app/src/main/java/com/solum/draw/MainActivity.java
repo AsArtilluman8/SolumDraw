@@ -10,11 +10,11 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.Settings;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import com.solum.draw.analyze.AnalysisVisualReport;
 import com.solum.draw.analyze.AnalyzerBenchmark;
 import com.solum.draw.analyze.ImageAnalysis;
 import com.solum.draw.analyze.ImageAnalyzer;
@@ -46,10 +46,11 @@ public final class MainActivity extends Activity {
     private ImageAnalysis lastAnalysis;
     private StrokePlan currentPlan;
     private String lastReconstructionSummary = "no reconstruction metrics";
+    private volatile boolean backgroundBusy = false;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 04E started");
+        RuntimeLog.line("boot", "SolumDraw Patch 04G started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -60,7 +61,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(13f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw 04E: Analyzer + Benchmark. Import image or run benchmark.");
+        status.setText("SolumDraw 04G: Visual Analyzer. Import image, Analyze, Bench.");
 
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -71,7 +72,7 @@ public final class MainActivity extends Activity {
         drawBar.setPadding(8, 4, 8, 4);
 
         Button importButton = button("Import");
-        Button analyzeButton = button("Analyze");
+        Button analyzeButton = button("Analyze+");
         Button infoButton = button("Info");
         Button canvasButton = button("Canvas");
         Button benchButton = button("Bench");
@@ -84,7 +85,6 @@ public final class MainActivity extends Activity {
         topBar.addView(infoButton);
         topBar.addView(canvasButton);
         topBar.addView(benchButton);
-
         drawBar.addView(fastButton);
         drawBar.addView(naturalButton);
         drawBar.addView(exportButton);
@@ -97,7 +97,7 @@ public final class MainActivity extends Activity {
         setContentView(root);
 
         importButton.setOnClickListener(v -> pickImage());
-        analyzeButton.setOnClickListener(v -> analyzeCurrentImage());
+        analyzeButton.setOnClickListener(v -> analyzeCurrentImageVisual());
         infoButton.setOnClickListener(v -> showImageInfo());
         canvasButton.setOnClickListener(v -> togglePreviewMode());
         benchButton.setOnClickListener(v -> runAnalyzerBenchmarkWithPermission());
@@ -147,7 +147,7 @@ public final class MainActivity extends Activity {
                 lastAnalysis = null;
                 lastReconstructionSummary = "no reconstruction metrics";
                 previewView.setPlan(null);
-                status.setText("Image: " + lastImageInfo.summary() + " | tap Analyze, Fast, or Natural");
+                status.setText("Image: " + lastImageInfo.summary() + " | tap Analyze+, Fast, or Natural");
             } catch (Exception e) {
                 CrashLogger.logHandledError("image_import", e);
                 RuntimeLog.error("image_import", e);
@@ -161,11 +161,8 @@ public final class MainActivity extends Activity {
         if (requestCode == REQUEST_BENCH_PERMISSION) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             RuntimeLog.line("benchmark_permission", granted ? "granted" : "denied");
-            if (granted) {
-                runAnalyzerBenchmark();
-            } else {
-                status.setText("Image permission denied. Enable Photos/Images permission for SolumDraw, then tap Bench again.");
-            }
+            if (granted) runAnalyzerBenchmark();
+            else status.setText("Image permission denied. Enable Photos/Images permission for SolumDraw, then tap Bench again.");
         }
     }
 
@@ -192,41 +189,62 @@ public final class MainActivity extends Activity {
         runAnalyzerBenchmark();
     }
 
-    private void analyzeCurrentImage() {
+    private void analyzeCurrentImageVisual() {
         if (sourceImage == null) {
             status.setText("Import image first.");
             return;
         }
-        try {
-            lastAnalysis = ImageAnalyzer.analyze(sourceImage, "current_import");
-            String text = "Analysis: " + lastAnalysis.shortSummary() + " | strategy: " + lastAnalysis.strategy + " | warnings: " + lastAnalysis.warnings;
-            status.setText(text);
-            RuntimeLog.line("analyze", text);
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_analysis_current.json");
-            FileWriter writer = new FileWriter(out);
-            writer.write(lastAnalysis.toJson());
-            writer.close();
-            RuntimeLog.line("analyze_export", out.getAbsolutePath());
-        } catch (Exception e) {
-            CrashLogger.logHandledError("analyze_current", e);
-            RuntimeLog.error("analyze_current", e);
-            status.setText("Analyze failed: " + e.getMessage());
+        if (backgroundBusy) {
+            status.setText("Busy. Wait for current analysis/benchmark to finish.");
+            return;
         }
+        backgroundBusy = true;
+        status.setText("Analyze+ running... visual report will be saved to Download");
+        RuntimeLog.line("analyze_visual", "start");
+        new Thread(() -> {
+            try {
+                ImageAnalysis analysis = ImageAnalyzer.analyze(sourceImage, "current_import");
+                lastAnalysis = analysis;
+                File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_analysis_current.json");
+                FileWriter writer = new FileWriter(out);
+                writer.write(analysis.toJson());
+                writer.close();
+                AnalysisVisualReport.Result report = AnalysisVisualReport.writeSingle(sourceImage, analysis);
+                String text = "Analyze+ done: " + analysis.shortSummary() + " | zip=" + report.zipPath;
+                RuntimeLog.line("analyze_visual", text);
+                runOnUiThread(() -> status.setText(text));
+            } catch (Exception e) {
+                CrashLogger.logHandledError("analyze_visual", e);
+                RuntimeLog.error("analyze_visual", e);
+                runOnUiThread(() -> status.setText("Analyze+ failed: " + e.getMessage()));
+            } finally {
+                backgroundBusy = false;
+            }
+        }).start();
     }
 
     private void runAnalyzerBenchmark() {
-        try {
-            status.setText("Benchmark running... input folder: /Download/" + AnalyzerBenchmark.INPUT_DIR);
-            RuntimeLog.line("benchmark", "start");
-            AnalyzerBenchmark.Result result = AnalyzerBenchmark.run(this);
-            String text = "Benchmark done: images=" + result.images + " errors=" + result.errors + " zip=" + result.zipPath;
-            status.setText(text);
-            RuntimeLog.line("benchmark", text);
-        } catch (Exception e) {
-            CrashLogger.logHandledError("benchmark", e);
-            RuntimeLog.error("benchmark", e);
-            status.setText("Benchmark failed: " + e.getMessage());
+        if (backgroundBusy) {
+            status.setText("Busy. Wait for current analysis/benchmark to finish.");
+            return;
         }
+        backgroundBusy = true;
+        status.setText("Benchmark running in background... app should stay responsive");
+        RuntimeLog.line("benchmark", "start async");
+        new Thread(() -> {
+            try {
+                AnalyzerBenchmark.Result result = AnalyzerBenchmark.run(this);
+                String text = "Benchmark done: images=" + result.images + " errors=" + result.errors + " zip=" + result.zipPath;
+                RuntimeLog.line("benchmark", text);
+                runOnUiThread(() -> status.setText(text));
+            } catch (Exception e) {
+                CrashLogger.logHandledError("benchmark", e);
+                RuntimeLog.error("benchmark", e);
+                runOnUiThread(() -> status.setText("Benchmark failed: " + e.getMessage()));
+            } finally {
+                backgroundBusy = false;
+            }
+        }).start();
     }
 
     private void showImageInfo() {
@@ -252,7 +270,6 @@ public final class MainActivity extends Activity {
         if (lastAnalysis == null) {
             try { lastAnalysis = ImageAnalyzer.analyze(sourceImage, "current_import"); } catch (Exception ignored) {}
         }
-
         try {
             Rect imageRect = previewView.currentImageRect();
             RuntimeLog.line("build_plan", "start mode=" + mode.name() + " bitmap=" + sourceImage.getWidth() + "x" + sourceImage.getHeight() + " preview=" + imageRect.width() + "x" + imageRect.height());
@@ -265,17 +282,8 @@ public final class MainActivity extends Activity {
             long ms = System.currentTimeMillis() - start;
             previewView.setPlan(currentPlan);
             lastReconstructionSummary = residual.summary() + " | " + runVirtualCanvasMetrics(currentPlan);
-
             String genre = lastAnalysis == null ? "no-analysis" : lastAnalysis.genre;
-            String summary = "Plan " + mode.name()
-                    + " | genre=" + genre
-                    + " | actions=" + currentPlan.actions.size()
-                    + " | ms=" + ms
-                    + " | S=" + currentPlan.countStagePrefix("SCULPTOR")
-                    + " P=" + currentPlan.countStagePrefix("POTTER")
-                    + " G=" + currentPlan.countStagePrefix("GRINDER")
-                    + " Po=" + currentPlan.countStagePrefix("POLISHER")
-                    + " | " + residual.summary();
+            String summary = "Plan " + mode.name() + " | genre=" + genre + " | actions=" + currentPlan.actions.size() + " | ms=" + ms + " | S=" + currentPlan.countStagePrefix("SCULPTOR") + " P=" + currentPlan.countStagePrefix("POTTER") + " G=" + currentPlan.countStagePrefix("GRINDER") + " Po=" + currentPlan.countStagePrefix("POLISHER") + " | " + residual.summary();
             status.setText(summary);
             RuntimeLog.line("build_plan", summary + " | " + lastReconstructionSummary);
         } catch (Exception e) {
@@ -291,9 +299,7 @@ public final class MainActivity extends Activity {
             VirtualCanvas virtualCanvas = new VirtualCanvas(target.width(), target.height());
             float sx = target.width() / (float) Math.max(1, previewView.currentImageRect().width());
             float sy = target.height() / (float) Math.max(1, previewView.currentImageRect().height());
-            for (StrokeAction action : plan.actions) {
-                virtualCanvas.apply(scaleStroke(action, sx, sy));
-            }
+            for (StrokeAction action : plan.actions) virtualCanvas.apply(scaleStroke(action, sx, sy));
             ReconstructionMetrics metrics = ReconstructionMetrics.compare(target, virtualCanvas);
             ErrorMap errorMap = ErrorMap.build(target, virtualCanvas, 16);
             String summary = virtualCanvas.summary() + " | " + metrics.summary() + " | " + errorMap.summary(3);
@@ -308,9 +314,7 @@ public final class MainActivity extends Activity {
 
     private StrokeAction scaleStroke(StrokeAction action, float sx, float sy) {
         java.util.ArrayList<android.graphics.PointF> scaled = new java.util.ArrayList<>();
-        for (android.graphics.PointF p : action.path) {
-            scaled.add(new android.graphics.PointF(p.x * sx, p.y * sy));
-        }
+        for (android.graphics.PointF p : action.path) scaled.add(new android.graphics.PointF(p.x * sx, p.y * sy));
         return new StrokeAction(action.stage, action.color, Math.max(1f, action.size * Math.max(sx, sy)), scaled);
     }
 
@@ -320,9 +324,8 @@ public final class MainActivity extends Activity {
             RuntimeLog.line("export_plan", "blocked: no plan");
             return;
         }
-
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04e.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04g.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
