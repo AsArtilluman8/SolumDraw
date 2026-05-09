@@ -20,6 +20,7 @@ import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
 import com.solum.draw.planner.StrokePlanJson;
 import com.solum.draw.preview.StrokePreviewView;
+import com.solum.draw.reconstruct.ErrorMap;
 import com.solum.draw.reconstruct.ReconstructionMetrics;
 import com.solum.draw.reconstruct.TargetImage;
 import com.solum.draw.reconstruct.VirtualCanvas;
@@ -38,7 +39,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 04B started");
+        RuntimeLog.line("boot", "SolumDraw Patch 04C started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -49,7 +50,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(14f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw Patch 04B: virtual canvas metrics");
+        status.setText("SolumDraw Patch 04C: virtual canvas + error map");
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -190,7 +191,8 @@ public final class MainActivity extends Activity {
                 virtualCanvas.apply(scaleStroke(action, sx, sy));
             }
             ReconstructionMetrics metrics = ReconstructionMetrics.compare(target, virtualCanvas);
-            String summary = virtualCanvas.summary() + " | " + metrics.summary();
+            ErrorMap errorMap = ErrorMap.build(target, virtualCanvas, 16);
+            String summary = virtualCanvas.summary() + " | " + metrics.summary() + " | " + errorMap.summary(3);
             RuntimeLog.line("reconstruct_metrics", summary);
             return summary;
         } catch (Exception e) {
@@ -216,7 +218,7 @@ public final class MainActivity extends Activity {
         }
 
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04b.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04c.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
