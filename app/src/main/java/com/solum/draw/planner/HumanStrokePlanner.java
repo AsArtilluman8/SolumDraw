@@ -50,7 +50,46 @@ public final class HumanStrokePlanner {
             index++;
         }
 
+        addEdgePass(actions, small, canvasWidth, canvasHeight, mode);
         return new StrokePlan(source.getWidth(), source.getHeight(), mode.name(), actions);
+    }
+
+    private static void addEdgePass(List<StrokeAction> actions, Bitmap small, int canvasWidth, int canvasHeight, DrawMode mode) {
+        List<EdgeSegment> edges = EdgeExtractor.extract(small, edgeLimit(mode));
+        int index = 0;
+        for (EdgeSegment edge : edges) {
+            List<PointF> path = edgePath(edge, canvasWidth, canvasHeight, small.getWidth(), small.getHeight(), mode, index);
+            if (path.size() < 2) continue;
+            String stage = index < polishStart(mode) ? "GRINDER_EDGE" : "POLISHER_ACCENT_EDGE";
+            float size = index < polishStart(mode) ? 3.2f : 2.1f;
+            actions.add(new StrokeAction(stage, edge.color, size, path));
+            index++;
+        }
+    }
+
+    private static int edgeLimit(DrawMode mode) {
+        if (mode == DrawMode.PRINTER_DEBUG) return 32;
+        if (mode == DrawMode.HUMAN_FAST) return 18;
+        return 24;
+    }
+
+    private static int polishStart(DrawMode mode) {
+        if (mode == DrawMode.PRINTER_DEBUG) return 24;
+        if (mode == DrawMode.HUMAN_FAST) return 13;
+        return 16;
+    }
+
+    private static List<PointF> edgePath(EdgeSegment edge, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode, int seedIndex) {
+        List<PointF> points = new ArrayList<>();
+        int stride = mode == DrawMode.PRINTER_DEBUG ? 1 : 2;
+        for (int i = 0; i < edge.points.size(); i += stride) {
+            Point p = edge.points.get(i);
+            points.add(toCanvas(p.x, p.y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        }
+        if (mode == DrawMode.HUMAN_NATURAL) {
+            return humanWobble(points, edge.color + seedIndex * 71, 1.1f);
+        }
+        return points;
     }
 
     private static int regionLimit(DrawMode mode) {
