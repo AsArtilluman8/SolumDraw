@@ -17,11 +17,15 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -58,12 +62,12 @@ public final class AnalyzerBenchmark {
                 Bitmap bitmap = image.decode(context.getContentResolver());
                 if (bitmap == null) throw new IllegalArgumentException("decode returned null");
                 ImageAnalysis analysis = ImageAnalyzer.analyze(bitmap, image.relativeName);
-                String exp = expected.get(image.relativeName);
+                String exp = findExpected(expected, image.relativeName);
                 boolean hasExpected = exp != null && exp.length() > 0;
                 boolean ok = hasExpected && exp.equals(analysis.genre);
                 if (hasExpected) expectedCount++;
                 if (ok) correct++;
-                items.add(new ItemResult(image.relativeName, exp == null ? "" : exp, analysis, ok));
+                items.add(new ItemResult(image.relativeName, exp == null ? "" : exp, analysis, ok, hasExpected));
                 writeText(new File(reportsDir, String.format(Locale.US, "%03d_%s.json", index, safeName(image.relativeName))), analysis.toJson());
                 index++;
             } catch (Exception e) {
@@ -71,12 +75,62 @@ public final class AnalyzerBenchmark {
             }
         }
 
-        String summary = summaryJson(items, errors, inputDir, expectedCount, correct, fileScanCount, images.size());
+        Stats stats = buildStats(items);
+        String summary = summaryJson(items, errors, inputDir, expectedCount, correct, fileScanCount, images.size(), expected.size(), stats);
         writeText(new File(outDir, "summary.json"), summary);
-        writeText(new File(outDir, "summary.txt"), summaryText(items, errors, inputDir, expectedCount, correct, fileScanCount, images.size()));
+        writeText(new File(outDir, "summary.txt"), summaryText(items, errors, inputDir, expectedCount, correct, fileScanCount, images.size(), expected.size(), stats));
+        writeText(new File(outDir, "confusion_matrix.json"), confusionJson(stats));
+        writeText(new File(outDir, "wrong_examples.txt"), wrongExamplesText(items, 80));
         File zip = new File(downloads, outDir.getName() + ".zip");
         zipDir(outDir, zip);
         return new Result(inputDir.getAbsolutePath(), zip.getAbsolutePath(), items.size(), errors.size());
+    }
+
+    private static String findExpected(Map<String, String> expected, String relativeName) {
+        if (relativeName == null) return "";
+        String normalized = relativeName.replace('\\', '/');
+        String direct = expected.get(normalized);
+        if (direct != null) return direct;
+
+        String fileName = normalized;
+        int slash = fileName.lastIndexOf('/');
+        if (slash >= 0) fileName = fileName.substring(slash + 1);
+
+        String byFile = expected.get(fileName);
+        if (byFile != null) return byFile;
+
+        String match = null;
+        for (Map.Entry<String, String> e : expected.entrySet()) {
+            String k = e.getKey().replace('\\', '/');
+            if (k.equals(normalized) || k.endsWith("/" + fileName)) {
+                if (match != null && !match.equals(e.getValue())) return "";
+                match = e.getValue();
+            }
+        }
+        return match == null ? "" : match;
+    }
+
+    private static Stats buildStats(List<ItemResult> items) {
+        Stats stats = new Stats();
+        for (ItemResult item : items) {
+            String pred = item.analysis.genre;
+            inc(stats.predictedCounts, pred);
+            if (item.hasExpected) {
+                inc(stats.expectedCounts, item.expected);
+                String key = item.expected + " -> " + pred;
+                inc(stats.confusion, key);
+                if (!item.ok) stats.wrongCount++;
+            } else {
+                stats.missingExpectedCount++;
+            }
+        }
+        return stats;
+    }
+
+    private static void inc(Map<String, Integer> map, String key) {
+        if (key == null || key.length() == 0) key = "unknown";
+        Integer old = map.get(key);
+        map.put(key, old == null ? 1 : old + 1);
     }
 
     private static void collectFileImages(File root, List<BenchImage> out) {
@@ -147,7 +201,7 @@ public final class AnalyzerBenchmark {
                 String[] parts = line.split(":", 2);
                 String k = cleanJsonString(parts[0]);
                 String v = cleanJsonString(parts[1]);
-                if (k.length() > 0 && v.length() > 0) out.put(k, v);
+                if (k.length() > 0 && v.length() > 0 && !k.equals("{") && !k.equals("}")) out.put(k, v);
             }
             r.close();
         } catch (Exception ignored) {
@@ -163,56 +217,123 @@ public final class AnalyzerBenchmark {
         return s.replace("\\/", "/").trim();
     }
 
-    private static String summaryJson(List<ItemResult> items, List<String> errors, File inputDir, int expectedCount, int correct, int fileScanCount, int finalScanCount) {
+    private static String summaryJson(List<ItemResult> items, List<String> errors, File inputDir, int expectedCount, int correct, int fileScanCount, int finalScanCount, int expectedJsonEntries, Stats stats) {
         StringBuilder b = new StringBuilder();
         b.append("{\n");
         b.append("  \"inputDir\": \"").append(inputDir.getAbsolutePath()).append("\",\n");
         b.append("  \"fileScanCount\": ").append(fileScanCount).append(",\n");
         b.append("  \"finalScanCount\": ").append(finalScanCount).append(",\n");
+        b.append("  \"expectedJsonEntries\": ").append(expectedJsonEntries).append(",\n");
         b.append("  \"count\": ").append(items.size()).append(",\n");
         b.append("  \"errors\": ").append(errors.size()).append(",\n");
         b.append("  \"expectedCount\": ").append(expectedCount).append(",\n");
+        b.append("  \"missingExpectedCount\": ").append(stats.missingExpectedCount).append(",\n");
         b.append("  \"correct\": ").append(correct).append(",\n");
+        b.append("  \"wrong\": ").append(stats.wrongCount).append(",\n");
         b.append("  \"accuracy\": ").append(expectedCount == 0 ? "0" : String.format(Locale.US, "%.4f", correct / (float) expectedCount)).append(",\n");
+        appendMapJson(b, "expectedByGenre", stats.expectedCounts, true);
+        appendMapJson(b, "predictedByGenre", stats.predictedCounts, true);
+        appendMapJson(b, "confusion", stats.confusion, true);
         b.append("  \"items\": [\n");
         for (int i = 0; i < items.size(); i++) {
             ItemResult item = items.get(i);
             ImageAnalysis a = item.analysis;
             if (i > 0) b.append(",\n");
-            b.append("    {\"name\":\"").append(item.name).append("\",\"expected\":\"").append(item.expected)
-                    .append("\",\"predicted\":\"").append(a.genre)
+            b.append("    {\"name\":\"").append(escape(item.name)).append("\",\"expected\":\"").append(escape(item.expected))
+                    .append("\",\"predicted\":\"").append(escape(a.genre))
                     .append("\",\"ok\":").append(item.ok)
+                    .append(",\"hasExpected\":").append(item.hasExpected)
                     .append(",\"confidence\":").append(String.format(Locale.US, "%.4f", a.confidence))
-                    .append(",\"strategy\":\"").append(a.strategy).append("\"}");
+                    .append(",\"strategy\":\"").append(escape(a.strategy)).append("\"}");
         }
         b.append("\n  ],\n  \"errorList\": [");
         for (int i = 0; i < errors.size(); i++) {
             if (i > 0) b.append(",");
-            b.append("\"").append(errors.get(i).replace("\"", "'")).append("\"");
+            b.append("\"").append(escape(errors.get(i))).append("\"");
         }
         b.append("]\n}");
         return b.toString();
     }
 
-    private static String summaryText(List<ItemResult> items, List<String> errors, File inputDir, int expectedCount, int correct, int fileScanCount, int finalScanCount) {
+    private static String summaryText(List<ItemResult> items, List<String> errors, File inputDir, int expectedCount, int correct, int fileScanCount, int finalScanCount, int expectedJsonEntries, Stats stats) {
         StringBuilder b = new StringBuilder();
         b.append("SolumDraw Analyzer Benchmark\n");
         b.append("Input: ").append(inputDir.getAbsolutePath()).append("\n");
         b.append("File scan: ").append(fileScanCount).append(" Final scan: ").append(finalScanCount).append("\n");
         b.append("Images: ").append(items.size()).append(" Errors: ").append(errors.size()).append("\n");
-        b.append("Expected: ").append(expectedCount).append(" Correct: ").append(correct).append(" Accuracy: ")
+        b.append("Expected JSON entries: ").append(expectedJsonEntries).append(" Matched expected: ").append(expectedCount).append(" Missing expected: ").append(stats.missingExpectedCount).append("\n");
+        b.append("Correct: ").append(correct).append(" Wrong: ").append(stats.wrongCount).append(" Accuracy: ")
                 .append(expectedCount == 0 ? "n/a" : Math.round(100f * correct / expectedCount) + "%").append("\n\n");
-        for (ItemResult item : items) {
-            b.append(item.ok ? "OK " : "BAD").append(" | ").append(item.name)
-                    .append(" | expected=").append(item.expected)
-                    .append(" predicted=").append(item.analysis.shortSummary())
-                    .append(" | ").append(item.analysis.strategy).append("\n");
-        }
+        b.append("Expected by genre:\n").append(mapText(stats.expectedCounts)).append("\n");
+        b.append("Predicted by genre:\n").append(mapText(stats.predictedCounts)).append("\n");
+        b.append("Confusion matrix:\n").append(mapText(stats.confusion)).append("\n");
+        b.append("Wrong examples:\n").append(wrongExamplesText(items, 30)).append("\n");
         if (!errors.isEmpty()) {
             b.append("\nErrors:\n");
             for (String e : errors) b.append("- ").append(e).append("\n");
         }
         return b.toString();
+    }
+
+    private static String confusionJson(Stats stats) {
+        StringBuilder b = new StringBuilder();
+        b.append("{\n");
+        appendMapJson(b, "expectedByGenre", stats.expectedCounts, true);
+        appendMapJson(b, "predictedByGenre", stats.predictedCounts, true);
+        appendMapJson(b, "confusion", stats.confusion, false);
+        b.append("}\n");
+        return b.toString();
+    }
+
+    private static String wrongExamplesText(List<ItemResult> items, int limit) {
+        StringBuilder b = new StringBuilder();
+        int count = 0;
+        for (ItemResult item : items) {
+            if (!item.hasExpected || item.ok) continue;
+            b.append("BAD | ").append(item.name)
+                    .append(" | expected=").append(item.expected)
+                    .append(" predicted=").append(item.analysis.genre)
+                    .append(" conf=").append(Math.round(item.analysis.confidence * 100f)).append("%")
+                    .append(" | ").append(item.analysis.strategy).append("\n");
+            count++;
+            if (count >= limit) break;
+        }
+        if (count == 0) b.append("none\n");
+        return b.toString();
+    }
+
+    private static void appendMapJson(StringBuilder b, String name, Map<String, Integer> map, boolean comma) {
+        b.append("  \"").append(name).append("\": {");
+        List<Map.Entry<String, Integer>> entries = sortedEntries(map);
+        for (int i = 0; i < entries.size(); i++) {
+            Map.Entry<String, Integer> e = entries.get(i);
+            if (i > 0) b.append(",");
+            b.append("\"").append(escape(e.getKey())).append("\":").append(e.getValue());
+        }
+        b.append("}");
+        if (comma) b.append(",");
+        b.append("\n");
+    }
+
+    private static String mapText(Map<String, Integer> map) {
+        StringBuilder b = new StringBuilder();
+        List<Map.Entry<String, Integer>> entries = sortedEntries(map);
+        if (entries.isEmpty()) return "  none\n";
+        for (Map.Entry<String, Integer> e : entries) {
+            b.append("  ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+        }
+        return b.toString();
+    }
+
+    private static List<Map.Entry<String, Integer>> sortedEntries(Map<String, Integer> map) {
+        List<Map.Entry<String, Integer>> entries = new ArrayList<>(map.entrySet());
+        Collections.sort(entries, new Comparator<Map.Entry<String, Integer>>() {
+            @Override public int compare(Map.Entry<String, Integer> a, Map.Entry<String, Integer> b) {
+                int c = b.getValue() - a.getValue();
+                return c != 0 ? c : a.getKey().compareTo(b.getKey());
+            }
+        });
+        return entries;
     }
 
     private static boolean isImageName(String name) {
@@ -222,6 +343,11 @@ public final class AnalyzerBenchmark {
 
     private static String safeName(String name) {
         return name.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private static String escape(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
     }
 
     private static String timestamp() {
@@ -253,6 +379,14 @@ public final class AnalyzerBenchmark {
             in.close();
             zip.closeEntry();
         }
+    }
+
+    private static final class Stats {
+        final Map<String, Integer> expectedCounts = new HashMap<>();
+        final Map<String, Integer> predictedCounts = new HashMap<>();
+        final Map<String, Integer> confusion = new HashMap<>();
+        int wrongCount = 0;
+        int missingExpectedCount = 0;
     }
 
     private static final class BenchImage {
@@ -291,11 +425,13 @@ public final class AnalyzerBenchmark {
         final String expected;
         final ImageAnalysis analysis;
         final boolean ok;
-        ItemResult(String name, String expected, ImageAnalysis analysis, boolean ok) {
+        final boolean hasExpected;
+        ItemResult(String name, String expected, ImageAnalysis analysis, boolean ok, boolean hasExpected) {
             this.name = name;
             this.expected = expected;
             this.analysis = analysis;
             this.ok = ok;
+            this.hasExpected = hasExpected;
         }
     }
 
