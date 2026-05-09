@@ -11,6 +11,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import com.solum.draw.debug.CrashLogger;
 import com.solum.draw.planner.DrawMode;
 import com.solum.draw.planner.HumanStrokePlanner;
 import com.solum.draw.planner.StrokePlan;
@@ -28,6 +29,7 @@ public final class MainActivity extends Activity {
     private StrokePlan currentPlan;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
+        CrashLogger.install(this);
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -38,7 +40,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(14f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw Patch 01: clean human stroke planner foundation");
+        status.setText("SolumDraw Patch 02A: crash log + human stroke foundation");
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -101,6 +103,7 @@ public final class MainActivity extends Activity {
                 previewView.setPlan(null);
                 status.setText("Image loaded: " + sourceImage.getWidth() + "x" + sourceImage.getHeight());
             } catch (Exception e) {
+                CrashLogger.logHandledError("image_import", e);
                 status.setText("Import failed: " + e.getMessage());
             }
         }
@@ -112,17 +115,22 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        int width = Math.max(1, previewView.getWidth());
-        int height = Math.max(1, previewView.getHeight());
-        currentPlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
-        previewView.setPlan(currentPlan);
+        try {
+            int width = Math.max(1, previewView.getWidth());
+            int height = Math.max(1, previewView.getHeight());
+            currentPlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
+            previewView.setPlan(currentPlan);
 
-        status.setText("Plan " + mode.name()
-                + " | actions=" + currentPlan.actions.size()
-                + " | Sculptor=" + currentPlan.countStagePrefix("SCULPTOR")
-                + " Potter=" + currentPlan.countStagePrefix("POTTER")
-                + " Grinder=" + currentPlan.countStagePrefix("GRINDER")
-                + " Polisher=" + currentPlan.countStagePrefix("POLISHER"));
+            status.setText("Plan " + mode.name()
+                    + " | actions=" + currentPlan.actions.size()
+                    + " | Sculptor=" + currentPlan.countStagePrefix("SCULPTOR")
+                    + " Potter=" + currentPlan.countStagePrefix("POTTER")
+                    + " Grinder=" + currentPlan.countStagePrefix("GRINDER")
+                    + " Polisher=" + currentPlan.countStagePrefix("POLISHER"));
+        } catch (Exception e) {
+            CrashLogger.logHandledError("build_plan_" + mode.name(), e);
+            status.setText("Plan failed: " + e.getMessage());
+        }
     }
 
     private void exportPlan() {
@@ -138,6 +146,7 @@ public final class MainActivity extends Activity {
             writer.close();
             status.setText("Exported: " + out.getAbsolutePath());
         } catch (Exception e) {
+            CrashLogger.logHandledError("export_plan", e);
             status.setText("Export failed: " + e.getMessage());
         }
     }
