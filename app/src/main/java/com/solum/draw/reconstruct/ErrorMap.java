@@ -54,6 +54,17 @@ public final class ErrorMap {
         return new ArrayList<>(cells.subList(0, n));
     }
 
+    public List<ErrorCell> topCellsAbove(int count, int minimumAverageError) {
+        List<ErrorCell> out = new ArrayList<>();
+        for (ErrorCell cell : cells) {
+            if (cell.averageError >= minimumAverageError) {
+                out.add(cell);
+                if (out.size() >= count) break;
+            }
+        }
+        return out;
+    }
+
     public String summary(int topCount) {
         StringBuilder out = new StringBuilder();
         out.append("errorMap cellSize=").append(cellSize).append(" cells=").append(cells.size());
