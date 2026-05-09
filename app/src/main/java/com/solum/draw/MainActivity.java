@@ -33,7 +33,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 03C started");
+        RuntimeLog.line("boot", "SolumDraw Patch 03F started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -44,7 +44,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(14f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw Patch 03C: fitted preview coordinates");
+        status.setText("SolumDraw Patch 03F: preview mode toggle");
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -52,14 +52,14 @@ public final class MainActivity extends Activity {
 
         Button importButton = button("Import");
         Button infoButton = button("Info");
-        Button printerButton = button("Printer");
+        Button canvasButton = button("Canvas");
         Button fastButton = button("Fast");
         Button naturalButton = button("Natural");
         Button exportButton = button("Export");
 
         bar.addView(importButton);
         bar.addView(infoButton);
-        bar.addView(printerButton);
+        bar.addView(canvasButton);
         bar.addView(fastButton);
         bar.addView(naturalButton);
         bar.addView(exportButton);
@@ -72,7 +72,7 @@ public final class MainActivity extends Activity {
 
         importButton.setOnClickListener(v -> pickImage());
         infoButton.setOnClickListener(v -> showImageInfo());
-        printerButton.setOnClickListener(v -> buildPlan(DrawMode.PRINTER_DEBUG));
+        canvasButton.setOnClickListener(v -> togglePreviewMode());
         fastButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_FAST));
         naturalButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_NATURAL));
         exportButton.setOnClickListener(v -> exportPlan());
@@ -94,6 +94,12 @@ public final class MainActivity extends Activity {
         intent.setType("image/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(intent, REQUEST_IMAGE);
+    }
+
+    private void togglePreviewMode() {
+        String mode = previewView.togglePreviewMode();
+        status.setText("Preview mode: " + mode);
+        RuntimeLog.line("preview_mode", mode);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -128,7 +134,7 @@ public final class MainActivity extends Activity {
         }
         String planInfo = currentPlan == null ? "no plan" : "plan actions=" + currentPlan.actions.size();
         Rect rect = previewView.currentImageRect();
-        String text = lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + " | " + planInfo + " | " + RuntimeLog.memory();
+        String text = lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + " | mode=" + previewView.previewModeName() + " | " + planInfo + " | " + RuntimeLog.memory();
         status.setText(text);
         RuntimeLog.line("image_info", text);
     }
@@ -174,7 +180,7 @@ public final class MainActivity extends Activity {
         }
 
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch03c.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch03f.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
