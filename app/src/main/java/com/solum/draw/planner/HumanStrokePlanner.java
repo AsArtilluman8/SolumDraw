@@ -2,17 +2,17 @@ package com.solum.draw.planner;
 
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.Point;
 import android.graphics.PointF;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Random;
 
 public final class HumanStrokePlanner {
-    private static final int SMALL_SIZE = 96;
+    private static final int SMALL_SIZE = 112;
+    private static final int MAX_REGIONS = 42;
 
     private HumanStrokePlanner() {}
 
@@ -20,21 +20,36 @@ public final class HumanStrokePlanner {
         Bitmap small = Bitmap.createScaledBitmap(source, SMALL_SIZE, SMALL_SIZE, true);
         List<StrokeAction> actions = new ArrayList<>();
 
-        actions.add(singlePoint("SCULPTOR_BACKGROUND", averageColor(small), 72f, canvasWidth * 0.5f, canvasHeight * 0.5f));
+        actions.add(singlePoint("SCULPTOR_BACKGROUND", averageColor(small), 76f, canvasWidth * 0.5f, canvasHeight * 0.5f));
 
-        List<Integer> palette = extractPalette(small, mode == DrawMode.HUMAN_NATURAL ? 14 : 20);
-        for (int i = 0; i < palette.size(); i++) {
-            int color = palette.get(i);
-            String stage = stageForIndex(i);
-            float brush = brushForIndex(i);
-            int maxPoints = maxPointsForIndex(i, mode);
-            List<PointF> points = sampleColorPoints(small, color, maxPoints, canvasWidth, canvasHeight);
-            if (points.size() > 1) {
-                actions.add(new StrokeAction(stage, color, brush, humanOrder(points, mode, color)));
+        List<ShapeRegion> regions = ShapeExtractor.extract(small, regionLimit(mode));
+        Collections.sort(regions, new Comparator<ShapeRegion>() {
+            @Override public int compare(ShapeRegion a, ShapeRegion b) {
+                int stageA = stageRank(a, small.getWidth(), small.getHeight());
+                int stageB = stageRank(b, small.getWidth(), small.getHeight());
+                if (stageA != stageB) return stageA - stageB;
+                return b.pixelCount - a.pixelCount;
             }
+        });
+
+        int index = 0;
+        for (ShapeRegion region : regions) {
+            String stage = stageForRegion(region, small.getWidth(), small.getHeight(), index);
+            float brush = brushForRegion(region, small.getWidth(), small.getHeight(), index);
+            List<PointF> path = regionPath(region, canvasWidth, canvasHeight, small.getWidth(), small.getHeight(), mode, index);
+            if (path.size() > 1) {
+                actions.add(new StrokeAction(stage, region.color, brush, path));
+            }
+            index++;
         }
 
         return new StrokePlan(source.getWidth(), source.getHeight(), mode.name(), actions);
+    }
+
+    private static int regionLimit(DrawMode mode) {
+        if (mode == DrawMode.PRINTER_DEBUG) return 56;
+        if (mode == DrawMode.HUMAN_FAST) return 34;
+        return MAX_REGIONS;
     }
 
     private static StrokeAction singlePoint(String stage, int color, float size, float x, float y) {
@@ -43,23 +58,74 @@ public final class HumanStrokePlanner {
         return new StrokeAction(stage, color, size, path);
     }
 
-    private static String stageForIndex(int index) {
-        if (index < 3) return "SCULPTOR_BIG_MASS";
-        if (index < 7) return "POTTER_FORM_REFINE";
-        if (index < 12) return "GRINDER_MID_DETAIL";
-        return "POLISHER_FINAL_ACCENT";
+    private static int stageRank(ShapeRegion region, int imageWidth, int imageHeight) {
+        if (region.isLargeMass(imageWidth, imageHeight)) return 0;
+        if (region.pixelCount > imageWidth * imageHeight * 0.012f || region.density() > 0.42f) return 1;
+        if (region.pixelCount > 18) return 2;
+        return 3;
     }
 
-    private static float brushForIndex(int index) {
-        if (index < 3) return 18f;
-        if (index < 7) return 11f;
-        if (index < 12) return 6f;
+    private static String stageForRegion(ShapeRegion region, int imageWidth, int imageHeight, int index) {
+        int rank = stageRank(region, imageWidth, imageHeight);
+        if (rank == 0) return "SCULPTOR_REGION_MASS";
+        if (rank == 1) return "POTTER_REGION_REFINE";
+        if (rank == 2) return "GRINDER_REGION_DETAIL";
+        return "POLISHER_REGION_ACCENT";
+    }
+
+    private static float brushForRegion(ShapeRegion region, int imageWidth, int imageHeight, int index) {
+        int rank = stageRank(region, imageWidth, imageHeight);
+        if (rank == 0) return Math.max(12f, Math.min(28f, Math.max(region.width(), region.height()) * 0.16f));
+        if (rank == 1) return Math.max(7f, Math.min(16f, Math.max(region.width(), region.height()) * 0.11f));
+        if (rank == 2) return 5f;
         return 3f;
     }
 
-    private static int maxPointsForIndex(int index, DrawMode mode) {
-        int base = mode == DrawMode.PRINTER_DEBUG ? 34 : 22;
-        return base + index * 2;
+    private static List<PointF> regionPath(ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode, int seedIndex) {
+        List<PointF> points = new ArrayList<>();
+
+        if (region.isLargeMass(imageWidth, imageHeight)) {
+            addBoxSweep(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight);
+        }
+
+        int stride = sampleStride(region, mode);
+        int count = 0;
+        for (Point sample : region.samples) {
+            if ((count++ % stride) != 0) continue;
+            points.add(toCanvas(sample.x, sample.y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        }
+
+        if (points.size() < 3) {
+            points.add(toCanvas(region.minX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            points.add(toCanvas(region.maxX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            points.add(toCanvas(region.maxX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            points.add(toCanvas(region.minX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        }
+
+        return humanOrder(points, mode, region.color + seedIndex * 31);
+    }
+
+    private static void addBoxSweep(List<PointF> points, ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight) {
+        int midY = (region.minY + region.maxY) / 2;
+        int q1Y = region.minY + Math.max(1, region.height() / 4);
+        int q3Y = region.maxY - Math.max(1, region.height() / 4);
+        points.add(toCanvas(region.minX, q1Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.maxX, q1Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.maxX, midY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.minX, midY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.minX, q3Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.maxX, q3Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+    }
+
+    private static int sampleStride(ShapeRegion region, DrawMode mode) {
+        if (mode == DrawMode.PRINTER_DEBUG) return 1;
+        if (region.pixelCount > 220) return 3;
+        if (mode == DrawMode.HUMAN_FAST) return 3;
+        return 2;
+    }
+
+    private static PointF toCanvas(int x, int y, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight) {
+        return new PointF((x / (float) imageWidth) * canvasWidth, (y / (float) imageHeight) * canvasHeight);
     }
 
     private static int averageColor(Bitmap bitmap) {
@@ -75,60 +141,6 @@ public final class HumanStrokePlanner {
         }
         if (n == 0) n = 1;
         return Color.rgb((int) (r / n), (int) (g / n), (int) (b / n));
-    }
-
-    private static List<Integer> extractPalette(Bitmap bitmap, int maxColors) {
-        Map<Integer, Integer> buckets = new HashMap<>();
-        for (int y = 0; y < bitmap.getHeight(); y += 2) {
-            for (int x = 0; x < bitmap.getWidth(); x += 2) {
-                int c = bitmap.getPixel(x, y);
-                int r = (Color.red(c) / 32) * 32;
-                int g = (Color.green(c) / 32) * 32;
-                int b = (Color.blue(c) / 32) * 32;
-                int q = Color.rgb(r, g, b);
-                Integer old = buckets.get(q);
-                buckets.put(q, old == null ? 1 : old + 1);
-            }
-        }
-
-        List<Map.Entry<Integer, Integer>> list = new ArrayList<>(buckets.entrySet());
-        Collections.sort(list, new Comparator<Map.Entry<Integer, Integer>>() {
-            @Override public int compare(Map.Entry<Integer, Integer> a, Map.Entry<Integer, Integer> b) {
-                return b.getValue() - a.getValue();
-            }
-        });
-
-        List<Integer> result = new ArrayList<>();
-        for (Map.Entry<Integer, Integer> entry : list) {
-            if (result.size() >= maxColors) break;
-            result.add(entry.getKey());
-        }
-        return result;
-    }
-
-    private static List<PointF> sampleColorPoints(Bitmap bitmap, int target, int maxPoints, int canvasWidth, int canvasHeight) {
-        List<PointF> points = new ArrayList<>();
-        int threshold = 42 * 42 * 3;
-        for (int y = 2; y < bitmap.getHeight() - 2; y += 3) {
-            for (int x = 2; x < bitmap.getWidth() - 2; x += 3) {
-                int c = bitmap.getPixel(x, y);
-                if (distanceSquared(c, target) < threshold) {
-                    points.add(new PointF((x / (float) bitmap.getWidth()) * canvasWidth, (y / (float) bitmap.getHeight()) * canvasHeight));
-                }
-            }
-        }
-        Collections.shuffle(points, new Random(1337 + target));
-        if (points.size() > maxPoints) {
-            return new ArrayList<>(points.subList(0, maxPoints));
-        }
-        return points;
-    }
-
-    private static int distanceSquared(int a, int b) {
-        int dr = Color.red(a) - Color.red(b);
-        int dg = Color.green(a) - Color.green(b);
-        int db = Color.blue(a) - Color.blue(b);
-        return dr * dr + dg * dg + db * db;
     }
 
     private static List<PointF> humanOrder(List<PointF> input, DrawMode mode, int seed) {
@@ -149,7 +161,7 @@ public final class HumanStrokePlanner {
                 float dy = p.y - current.y;
                 float d = dx * dx + dy * dy;
                 if (mode == DrawMode.HUMAN_NATURAL) {
-                    d *= 0.85f + random.nextFloat() * 0.35f;
+                    d *= 0.82f + random.nextFloat() * 0.42f;
                 }
                 if (d < bestDistance) {
                     bestDistance = d;
@@ -158,7 +170,7 @@ public final class HumanStrokePlanner {
             }
             current = pool.remove(bestIndex);
             if (mode != DrawMode.PRINTER_DEBUG) {
-                current = new PointF(current.x + (random.nextFloat() - 0.5f) * 2.4f, current.y + (random.nextFloat() - 0.5f) * 2.4f);
+                current = new PointF(current.x + (random.nextFloat() - 0.5f) * 2.2f, current.y + (random.nextFloat() - 0.5f) * 2.2f);
             }
             out.add(current);
         }
