@@ -25,6 +25,11 @@ public final class ImageAnalysis {
     public final float saliencyDensity;
     public final float centralObjectRatio;
     public final float symmetryVertical;
+    public final int componentCount;
+    public final int textComponentCount;
+    public final int textLineCount;
+    public final int largeComponentCount;
+    public final float largestComponentRatio;
     public final List<ColorCount> palette;
     public final String strategy;
     public final String warnings;
@@ -35,7 +40,7 @@ public final class ImageAnalysis {
             List<ColorCount> palette, String strategy, String warnings) {
         this(name, sourceWidth, sourceHeight, analysisWidth, analysisHeight, genre, confidence, edgeDensity,
                 detailDensity, skinRatio, textRatio, saturation, brightness, paletteCompactness, darkRatio, brightRatio,
-                0f, 0f, 0f, 0f, 0f, 0f, palette, strategy, warnings);
+                0f, 0f, 0f, 0f, 0f, 0f, 0, 0, 0, 0, 0f, palette, strategy, warnings);
     }
 
     public ImageAnalysis(String name, int sourceWidth, int sourceHeight, int analysisWidth, int analysisHeight,
@@ -43,6 +48,19 @@ public final class ImageAnalysis {
             float saturation, float brightness, float paletteCompactness, float darkRatio, float brightRatio,
             float realTextRatio, float glyphRatio, float logoScore, float saliencyDensity,
             float centralObjectRatio, float symmetryVertical, List<ColorCount> palette, String strategy, String warnings) {
+        this(name, sourceWidth, sourceHeight, analysisWidth, analysisHeight, genre, confidence, edgeDensity,
+                detailDensity, skinRatio, textRatio, saturation, brightness, paletteCompactness, darkRatio, brightRatio,
+                realTextRatio, glyphRatio, logoScore, saliencyDensity, centralObjectRatio, symmetryVertical,
+                0, 0, 0, 0, 0f, palette, strategy, warnings);
+    }
+
+    public ImageAnalysis(String name, int sourceWidth, int sourceHeight, int analysisWidth, int analysisHeight,
+            String genre, float confidence, float edgeDensity, float detailDensity, float skinRatio, float textRatio,
+            float saturation, float brightness, float paletteCompactness, float darkRatio, float brightRatio,
+            float realTextRatio, float glyphRatio, float logoScore, float saliencyDensity,
+            float centralObjectRatio, float symmetryVertical, int componentCount, int textComponentCount,
+            int textLineCount, int largeComponentCount, float largestComponentRatio,
+            List<ColorCount> palette, String strategy, String warnings) {
         this.name = name;
         this.sourceWidth = sourceWidth;
         this.sourceHeight = sourceHeight;
@@ -65,6 +83,11 @@ public final class ImageAnalysis {
         this.saliencyDensity = saliencyDensity;
         this.centralObjectRatio = centralObjectRatio;
         this.symmetryVertical = symmetryVertical;
+        this.componentCount = componentCount;
+        this.textComponentCount = textComponentCount;
+        this.textLineCount = textLineCount;
+        this.largeComponentCount = largeComponentCount;
+        this.largestComponentRatio = largestComponentRatio;
         this.palette = palette;
         this.strategy = strategy;
         this.warnings = warnings;
@@ -73,7 +96,7 @@ public final class ImageAnalysis {
     public String shortSummary() {
         return genre + " conf=" + pct(confidence) + " edge=" + pct(edgeDensity) + " detail=" + pct(detailDensity)
                 + " skin=" + pct(skinRatio) + " text=" + pct(realTextRatio) + " glyph=" + pct(glyphRatio)
-                + " logo=" + pct(logoScore);
+                + " logo=" + pct(logoScore) + " comp=" + componentCount + "/" + textComponentCount;
     }
 
     public String toJson() {
@@ -96,6 +119,11 @@ public final class ImageAnalysis {
         b.append("  \"saliencyDensity\": ").append(num(saliencyDensity)).append(",\n");
         b.append("  \"centralObjectRatio\": ").append(num(centralObjectRatio)).append(",\n");
         b.append("  \"symmetryVertical\": ").append(num(symmetryVertical)).append(",\n");
+        b.append("  \"componentCount\": ").append(componentCount).append(",\n");
+        b.append("  \"textComponentCount\": ").append(textComponentCount).append(",\n");
+        b.append("  \"textLineCount\": ").append(textLineCount).append(",\n");
+        b.append("  \"largeComponentCount\": ").append(largeComponentCount).append(",\n");
+        b.append("  \"largestComponentRatio\": ").append(num(largestComponentRatio)).append(",\n");
         b.append("  \"saturation\": ").append(num(saturation)).append(",\n");
         b.append("  \"brightness\": ").append(num(brightness)).append(",\n");
         b.append("  \"paletteCompactness\": ").append(num(paletteCompactness)).append(",\n");
