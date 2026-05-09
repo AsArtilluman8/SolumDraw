@@ -11,7 +11,7 @@ import java.util.Random;
 
 public final class ResidualPlanner {
     private static final int TARGET_SIDE = 192;
-    private static final int CELL_SIZE = 16;
+    private static final int CELL_SIZE = 12;
 
     private ResidualPlanner() {}
 
@@ -41,48 +41,61 @@ public final class ResidualPlanner {
     }
 
     private static List<StrokeAction> buildResidualActions(TargetImage target, ErrorMap errorMap, DrawMode mode, int canvasWidth, int canvasHeight) {
-        int limit = mode == DrawMode.HUMAN_FAST ? 60 : 110;
-        int minError = mode == DrawMode.HUMAN_FAST ? 150 : 115;
-        List<ErrorCell> cells = errorMap.topCellsAbove(limit, minError);
+        int cellLimit = mode == DrawMode.HUMAN_FAST ? 80 : 130;
+        int minError = mode == DrawMode.HUMAN_FAST ? 118 : 92;
+        List<ErrorCell> cells = errorMap.topCellsAbove(cellLimit, minError);
         List<StrokeAction> actions = new ArrayList<>();
         Random random = new Random(4040L + cells.size() + mode.ordinal() * 17L);
 
         int index = 0;
         for (ErrorCell cell : cells) {
             int color = averageTargetColor(target, cell);
-            String stage = index < limit * 0.55f ? "GRINDER_RESIDUAL_CELL" : "POLISHER_RESIDUAL_CELL";
-            float brush = mode == DrawMode.HUMAN_FAST ? 3.4f : 2.8f;
-            if (cell.averageError > 300) brush += 1.5f;
-            List<PointF> path = residualCellPath(cell, target.width(), target.height(), canvasWidth, canvasHeight, mode, random, index);
-            if (path.size() > 1) {
-                actions.add(new StrokeAction(stage, color, brush, path));
+            String stage = index < cellLimit * 0.60f ? "GRINDER_RESIDUAL_FILL" : "POLISHER_RESIDUAL_FILL";
+            float brush = mode == DrawMode.HUMAN_FAST ? 2.7f : 2.25f;
+            if (cell.averageError > 280) brush += 0.9f;
+            List<List<PointF>> paths = residualCellPaths(cell, target.width(), target.height(), canvasWidth, canvasHeight, mode, random, index);
+            for (List<PointF> path : paths) {
+                if (path.size() > 1) {
+                    actions.add(new StrokeAction(stage, color, brush, path));
+                }
             }
             index++;
         }
         return actions;
     }
 
-    private static List<PointF> residualCellPath(ErrorCell cell, int targetWidth, int targetHeight, int canvasWidth, int canvasHeight, DrawMode mode, Random random, int index) {
-        List<PointF> path = new ArrayList<>();
+    private static List<List<PointF>> residualCellPaths(ErrorCell cell, int targetWidth, int targetHeight, int canvasWidth, int canvasHeight, DrawMode mode, Random random, int index) {
+        List<List<PointF>> paths = new ArrayList<>();
         float x0 = (cell.x / (float) targetWidth) * canvasWidth;
         float y0 = (cell.y / (float) targetHeight) * canvasHeight;
         float x1 = ((cell.x + cell.width) / (float) targetWidth) * canvasWidth;
         float y1 = ((cell.y + cell.height) / (float) targetHeight) * canvasHeight;
-        float cx = (x0 + x1) * 0.5f;
-        float cy = (y0 + y1) * 0.5f;
+        float h = Math.max(1f, y1 - y0);
+        int lines = mode == DrawMode.HUMAN_FAST ? 2 : 3;
+        if (cell.averageError > 340) lines++;
 
-        if (mode == DrawMode.HUMAN_FAST || index % 3 == 0) {
-            path.add(new PointF(x0, cy + wobble(random, 2.0f)));
-            path.add(new PointF(x1, cy + wobble(random, 2.0f)));
-        } else if (index % 3 == 1) {
-            path.add(new PointF(cx + wobble(random, 2.0f), y0));
-            path.add(new PointF(cx + wobble(random, 2.0f), y1));
-        } else {
-            path.add(new PointF(x0, y0));
-            path.add(new PointF(cx + wobble(random, 1.5f), cy + wobble(random, 1.5f)));
-            path.add(new PointF(x1, y1));
+        for (int i = 0; i < lines; i++) {
+            float t = (i + 0.5f) / lines;
+            float y = y0 + h * t + wobble(random, 1.2f);
+            ArrayList<PointF> path = new ArrayList<>();
+            if ((index + i) % 2 == 0) {
+                path.add(new PointF(x0 + wobble(random, 1.0f), y));
+                path.add(new PointF(x1 + wobble(random, 1.0f), y + wobble(random, 1.2f)));
+            } else {
+                path.add(new PointF(x1 + wobble(random, 1.0f), y));
+                path.add(new PointF(x0 + wobble(random, 1.0f), y + wobble(random, 1.2f)));
+            }
+            paths.add(path);
         }
-        return path;
+
+        if (mode == DrawMode.HUMAN_NATURAL && index % 4 == 0) {
+            float cx = (x0 + x1) * 0.5f;
+            ArrayList<PointF> vertical = new ArrayList<>();
+            vertical.add(new PointF(cx + wobble(random, 1.0f), y0));
+            vertical.add(new PointF(cx + wobble(random, 1.0f), y1));
+            paths.add(vertical);
+        }
+        return paths;
     }
 
     private static int averageTargetColor(TargetImage target, ErrorCell cell) {
