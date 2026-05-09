@@ -34,18 +34,29 @@ public final class StrokePreviewView extends View {
         invalidate();
     }
 
+    public Rect currentImageRect() {
+        if (sourceImage == null) {
+            return new Rect(0, 0, Math.max(1, getWidth()), Math.max(1, getHeight()));
+        }
+        return fitRect(sourceImage.getWidth(), sourceImage.getHeight(), Math.max(1, getWidth()), Math.max(1, getHeight()));
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
+        Rect dst = currentImageRect();
         if (sourceImage != null) {
-            Rect dst = fitRect(sourceImage.getWidth(), sourceImage.getHeight(), getWidth(), getHeight());
-            paint.setAlpha(48);
+            paint.setAlpha(64);
             canvas.drawBitmap(sourceImage, null, dst, paint);
             paint.setAlpha(255);
         }
 
         if (plan != null) {
+            canvas.save();
+            canvas.clipRect(dst);
+            canvas.translate(dst.left, dst.top);
             drawPlan(canvas, plan);
+            canvas.restore();
         }
 
         paint.setStyle(Paint.Style.FILL);
@@ -56,6 +67,9 @@ public final class StrokePreviewView extends View {
 
     private void drawPlan(Canvas canvas, StrokePlan plan) {
         for (StrokeAction action : plan.actions) {
+            if (isSuppressedPreviewStroke(action)) {
+                continue;
+            }
             paint.setColor(action.color);
             paint.setStrokeWidth(action.size);
             paint.setStyle(Paint.Style.STROKE);
@@ -75,6 +89,14 @@ public final class StrokePreviewView extends View {
                 canvas.drawPath(path, paint);
             }
         }
+    }
+
+    private static boolean isSuppressedPreviewStroke(StrokeAction action) {
+        int r = Color.red(action.color);
+        int g = Color.green(action.color);
+        int b = Color.blue(action.color);
+        int luma = (r * 30 + g * 59 + b * 11) / 100;
+        return luma < 16 && action.stage.startsWith("SCULPTOR");
     }
 
     private static Rect fitRect(int imageWidth, int imageHeight, int viewWidth, int viewHeight) {
