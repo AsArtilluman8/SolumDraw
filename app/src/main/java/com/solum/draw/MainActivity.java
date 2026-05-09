@@ -16,9 +16,13 @@ import com.solum.draw.debug.RuntimeLog;
 import com.solum.draw.image.SafeBitmapLoader;
 import com.solum.draw.planner.DrawMode;
 import com.solum.draw.planner.HumanStrokePlanner;
+import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
 import com.solum.draw.planner.StrokePlanJson;
 import com.solum.draw.preview.StrokePreviewView;
+import com.solum.draw.reconstruct.ReconstructionMetrics;
+import com.solum.draw.reconstruct.TargetImage;
+import com.solum.draw.reconstruct.VirtualCanvas;
 import java.io.File;
 import java.io.FileWriter;
 
@@ -30,10 +34,11 @@ public final class MainActivity extends Activity {
     private Bitmap sourceImage;
     private SafeBitmapLoader.Result lastImageInfo;
     private StrokePlan currentPlan;
+    private String lastReconstructionSummary = "no reconstruction metrics";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 03F started");
+        RuntimeLog.line("boot", "SolumDraw Patch 04B started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -44,7 +49,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(14f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw Patch 03F: preview mode toggle");
+        status.setText("SolumDraw Patch 04B: virtual canvas metrics");
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -116,6 +121,7 @@ public final class MainActivity extends Activity {
                 sourceImage = lastImageInfo.bitmap;
                 previewView.setSourceImage(sourceImage);
                 currentPlan = null;
+                lastReconstructionSummary = "no reconstruction metrics";
                 previewView.setPlan(null);
                 status.setText("Image: " + lastImageInfo.summary() + " | " + RuntimeLog.memory());
             } catch (Exception e) {
@@ -134,7 +140,7 @@ public final class MainActivity extends Activity {
         }
         String planInfo = currentPlan == null ? "no plan" : "plan actions=" + currentPlan.actions.size();
         Rect rect = previewView.currentImageRect();
-        String text = lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + " | mode=" + previewView.previewModeName() + " | " + planInfo + " | " + RuntimeLog.memory();
+        String text = lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + " | mode=" + previewView.previewModeName() + " | " + planInfo + " | " + lastReconstructionSummary + " | " + RuntimeLog.memory();
         status.setText(text);
         RuntimeLog.line("image_info", text);
     }
@@ -155,6 +161,7 @@ public final class MainActivity extends Activity {
             currentPlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
             long ms = System.currentTimeMillis() - start;
             previewView.setPlan(currentPlan);
+            lastReconstructionSummary = runVirtualCanvasMetrics(currentPlan);
 
             String summary = "Plan " + mode.name()
                     + " | actions=" + currentPlan.actions.size()
@@ -162,7 +169,8 @@ public final class MainActivity extends Activity {
                     + " | Sculptor=" + currentPlan.countStagePrefix("SCULPTOR")
                     + " Potter=" + currentPlan.countStagePrefix("POTTER")
                     + " Grinder=" + currentPlan.countStagePrefix("GRINDER")
-                    + " Polisher=" + currentPlan.countStagePrefix("POLISHER");
+                    + " Polisher=" + currentPlan.countStagePrefix("POLISHER")
+                    + " | " + lastReconstructionSummary;
             status.setText(summary);
             RuntimeLog.line("build_plan", summary);
         } catch (Exception e) {
@@ -170,6 +178,34 @@ public final class MainActivity extends Activity {
             RuntimeLog.error("build_plan_" + mode.name(), e);
             status.setText("Plan failed: " + e.getMessage());
         }
+    }
+
+    private String runVirtualCanvasMetrics(StrokePlan plan) {
+        try {
+            TargetImage target = new TargetImage(sourceImage, 192);
+            VirtualCanvas virtualCanvas = new VirtualCanvas(target.width(), target.height());
+            float sx = target.width() / (float) Math.max(1, previewView.currentImageRect().width());
+            float sy = target.height() / (float) Math.max(1, previewView.currentImageRect().height());
+            for (StrokeAction action : plan.actions) {
+                virtualCanvas.apply(scaleStroke(action, sx, sy));
+            }
+            ReconstructionMetrics metrics = ReconstructionMetrics.compare(target, virtualCanvas);
+            String summary = virtualCanvas.summary() + " | " + metrics.summary();
+            RuntimeLog.line("reconstruct_metrics", summary);
+            return summary;
+        } catch (Exception e) {
+            CrashLogger.logHandledError("reconstruct_metrics", e);
+            RuntimeLog.error("reconstruct_metrics", e);
+            return "reconstruction metrics failed: " + e.getMessage();
+        }
+    }
+
+    private StrokeAction scaleStroke(StrokeAction action, float sx, float sy) {
+        java.util.ArrayList<android.graphics.PointF> scaled = new java.util.ArrayList<>();
+        for (android.graphics.PointF p : action.path) {
+            scaled.add(new android.graphics.PointF(p.x * sx, p.y * sy));
+        }
+        return new StrokeAction(action.stage, action.color, Math.max(1f, action.size * Math.max(sx, sy)), scaled);
     }
 
     private void exportPlan() {
@@ -180,7 +216,7 @@ public final class MainActivity extends Activity {
         }
 
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch03f.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04b.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
