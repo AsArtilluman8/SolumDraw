@@ -11,8 +11,8 @@ import java.util.List;
 import java.util.Random;
 
 public final class HumanStrokePlanner {
-    private static final int SMALL_SIZE = 112;
-    private static final int MAX_REGIONS = 42;
+    private static final int SMALL_SIZE = 128;
+    private static final int MAX_REGIONS = 58;
 
     private HumanStrokePlanner() {}
 
@@ -20,7 +20,7 @@ public final class HumanStrokePlanner {
         Bitmap small = Bitmap.createScaledBitmap(source, SMALL_SIZE, SMALL_SIZE, true);
         List<StrokeAction> actions = new ArrayList<>();
 
-        actions.add(singlePoint("SCULPTOR_BACKGROUND", averageColor(small), 76f, canvasWidth * 0.5f, canvasHeight * 0.5f));
+        actions.add(singlePoint("SCULPTOR_BACKGROUND", averageColor(small), 86f, canvasWidth * 0.5f, canvasHeight * 0.5f));
 
         List<ShapeRegion> regions = ShapeExtractor.extract(small, regionLimit(mode));
         Collections.sort(regions, new Comparator<ShapeRegion>() {
@@ -40,6 +40,13 @@ public final class HumanStrokePlanner {
             if (path.size() > 1) {
                 actions.add(new StrokeAction(stage, region.color, brush, path));
             }
+
+            if (needsCoveragePass(region, small.getWidth(), small.getHeight(), mode)) {
+                List<PointF> coverage = coveragePath(region, canvasWidth, canvasHeight, small.getWidth(), small.getHeight(), mode, index);
+                if (coverage.size() > 1) {
+                    actions.add(new StrokeAction(stage + "_COVERAGE", soften(region.color), Math.max(brush * 0.72f, 5f), coverage));
+                }
+            }
             index++;
         }
 
@@ -47,8 +54,8 @@ public final class HumanStrokePlanner {
     }
 
     private static int regionLimit(DrawMode mode) {
-        if (mode == DrawMode.PRINTER_DEBUG) return 56;
-        if (mode == DrawMode.HUMAN_FAST) return 34;
+        if (mode == DrawMode.PRINTER_DEBUG) return 72;
+        if (mode == DrawMode.HUMAN_FAST) return 48;
         return MAX_REGIONS;
     }
 
@@ -60,8 +67,8 @@ public final class HumanStrokePlanner {
 
     private static int stageRank(ShapeRegion region, int imageWidth, int imageHeight) {
         if (region.isLargeMass(imageWidth, imageHeight)) return 0;
-        if (region.pixelCount > imageWidth * imageHeight * 0.012f || region.density() > 0.42f) return 1;
-        if (region.pixelCount > 18) return 2;
+        if (region.pixelCount > imageWidth * imageHeight * 0.009f || region.density() > 0.30f) return 1;
+        if (region.pixelCount > 12) return 2;
         return 3;
     }
 
@@ -75,17 +82,23 @@ public final class HumanStrokePlanner {
 
     private static float brushForRegion(ShapeRegion region, int imageWidth, int imageHeight, int index) {
         int rank = stageRank(region, imageWidth, imageHeight);
-        if (rank == 0) return Math.max(12f, Math.min(28f, Math.max(region.width(), region.height()) * 0.16f));
-        if (rank == 1) return Math.max(7f, Math.min(16f, Math.max(region.width(), region.height()) * 0.11f));
-        if (rank == 2) return 5f;
-        return 3f;
+        if (rank == 0) return Math.max(14f, Math.min(34f, Math.max(region.width(), region.height()) * 0.19f));
+        if (rank == 1) return Math.max(8f, Math.min(19f, Math.max(region.width(), region.height()) * 0.13f));
+        if (rank == 2) return 5.5f;
+        return 3.2f;
+    }
+
+    private static boolean needsCoveragePass(ShapeRegion region, int imageWidth, int imageHeight, DrawMode mode) {
+        if (mode == DrawMode.PRINTER_DEBUG) return false;
+        int rank = stageRank(region, imageWidth, imageHeight);
+        return rank <= 1 && region.area() > 80;
     }
 
     private static List<PointF> regionPath(ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode, int seedIndex) {
         List<PointF> points = new ArrayList<>();
 
         if (region.isLargeMass(imageWidth, imageHeight)) {
-            addBoxSweep(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight);
+            addBoxSweep(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight, mode);
         }
 
         int stride = sampleStride(region, mode);
@@ -95,33 +108,64 @@ public final class HumanStrokePlanner {
             points.add(toCanvas(sample.x, sample.y, canvasWidth, canvasHeight, imageWidth, imageHeight));
         }
 
+        addRegionCorners(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight);
+
         if (points.size() < 3) {
-            points.add(toCanvas(region.minX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
-            points.add(toCanvas(region.maxX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
-            points.add(toCanvas(region.maxX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
-            points.add(toCanvas(region.minX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            addBoxSweep(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight, mode);
         }
 
         return humanOrder(points, mode, region.color + seedIndex * 31);
     }
 
-    private static void addBoxSweep(List<PointF> points, ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight) {
-        int midY = (region.minY + region.maxY) / 2;
-        int q1Y = region.minY + Math.max(1, region.height() / 4);
-        int q3Y = region.maxY - Math.max(1, region.height() / 4);
-        points.add(toCanvas(region.minX, q1Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
-        points.add(toCanvas(region.maxX, q1Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
-        points.add(toCanvas(region.maxX, midY, canvasWidth, canvasHeight, imageWidth, imageHeight));
-        points.add(toCanvas(region.minX, midY, canvasWidth, canvasHeight, imageWidth, imageHeight));
-        points.add(toCanvas(region.minX, q3Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
-        points.add(toCanvas(region.maxX, q3Y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+    private static List<PointF> coveragePath(ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode, int seedIndex) {
+        List<PointF> points = new ArrayList<>();
+        int lines = Math.max(3, Math.min(10, region.height() / 3));
+        for (int i = 0; i < lines; i++) {
+            int y = region.minY + Math.round((i + 0.5f) * region.height() / lines);
+            if (i % 2 == 0) {
+                points.add(toCanvas(region.minX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+                points.add(toCanvas(region.maxX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            } else {
+                points.add(toCanvas(region.maxX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+                points.add(toCanvas(region.minX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            }
+        }
+        if (mode == DrawMode.HUMAN_NATURAL) {
+            return humanWobble(points, region.color + seedIndex * 101, 1.4f);
+        }
+        return points;
+    }
+
+    private static void addBoxSweep(List<PointF> points, ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode) {
+        int lines = Math.max(3, Math.min(8, region.height() / 4));
+        for (int i = 0; i < lines; i++) {
+            int y = region.minY + Math.round((i + 0.5f) * region.height() / lines);
+            if (i % 2 == 0) {
+                points.add(toCanvas(region.minX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+                points.add(toCanvas(region.maxX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            } else {
+                points.add(toCanvas(region.maxX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+                points.add(toCanvas(region.minX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            }
+        }
+        if (mode != DrawMode.HUMAN_FAST) {
+            int midX = (region.minX + region.maxX) / 2;
+            points.add(toCanvas(midX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+            points.add(toCanvas(midX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        }
+    }
+
+    private static void addRegionCorners(List<PointF> points, ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight) {
+        points.add(toCanvas(region.minX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.maxX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.maxX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
+        points.add(toCanvas(region.minX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
     }
 
     private static int sampleStride(ShapeRegion region, DrawMode mode) {
         if (mode == DrawMode.PRINTER_DEBUG) return 1;
-        if (region.pixelCount > 220) return 3;
-        if (mode == DrawMode.HUMAN_FAST) return 3;
-        return 2;
+        if (mode == DrawMode.HUMAN_FAST) return region.pixelCount > 260 ? 2 : 1;
+        return region.pixelCount > 320 ? 2 : 1;
     }
 
     private static PointF toCanvas(int x, int y, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight) {
@@ -141,6 +185,13 @@ public final class HumanStrokePlanner {
         }
         if (n == 0) n = 1;
         return Color.rgb((int) (r / n), (int) (g / n), (int) (b / n));
+    }
+
+    private static int soften(int color) {
+        int r = Math.min(255, Color.red(color) + 8);
+        int g = Math.min(255, Color.green(color) + 8);
+        int b = Math.min(255, Color.blue(color) + 8);
+        return Color.rgb(r, g, b);
     }
 
     private static List<PointF> humanOrder(List<PointF> input, DrawMode mode, int seed) {
@@ -173,6 +224,15 @@ public final class HumanStrokePlanner {
                 current = new PointF(current.x + (random.nextFloat() - 0.5f) * 2.2f, current.y + (random.nextFloat() - 0.5f) * 2.2f);
             }
             out.add(current);
+        }
+        return out;
+    }
+
+    private static List<PointF> humanWobble(List<PointF> input, int seed, float amount) {
+        Random random = new Random(seed);
+        List<PointF> out = new ArrayList<>();
+        for (PointF p : input) {
+            out.add(new PointF(p.x + (random.nextFloat() - 0.5f) * amount, p.y + (random.nextFloat() - 0.5f) * amount));
         }
         return out;
     }
