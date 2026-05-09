@@ -24,7 +24,7 @@ Status: current PR.
 
 Goal: make image import safe before deeper drawing algorithms.
 
-Planned output files:
+Output files:
 
 - `solumdraw_runtime_log.txt`
 - `solumdraw_stroke_plan_patch02b.json`
@@ -37,17 +37,30 @@ Included checks:
 - Runtime memory summary.
 - Plan build duration.
 
-## Patch 03 - Real shape extraction
+## Patch 03A - Shape extraction foundation
 
-Goal: replace coarse palette point sampling with real image structure.
+Status: added to current PR.
+
+Goal: replace coarse palette point sampling with connected color regions.
+
+Included work:
+
+- Quantized color labels.
+- Flood-fill connected region extraction.
+- Region bounds, area, density, and sample points.
+- Stage ranking by region size/density.
+- Planner now emits region-based Sculptor/Potter/Grinder/Polisher actions.
+
+## Patch 03B - Edge and contour pass
+
+Goal: add real edge/outline extraction on top of regions.
 
 Planned work:
 
-- Edge detection.
-- Region island extraction.
-- Large area fill planning.
-- Route grouping by form, not only by color.
-- Separate background, mass, contour, detail passes.
+- Luma/contrast edge detection.
+- Region border tracing.
+- Face/important-detail priority hints.
+- Separate outline strokes from fill strokes.
 
 ## Patch 04 - Sculptor and Potter real passes
 
