@@ -1,12 +1,16 @@
 package com.solum.draw;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.Settings;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -33,6 +37,7 @@ import java.io.FileWriter;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_IMAGE = 1001;
+    private static final int REQUEST_BENCH_PERMISSION = 2002;
 
     private TextView status;
     private StrokePreviewView previewView;
@@ -95,7 +100,7 @@ public final class MainActivity extends Activity {
         analyzeButton.setOnClickListener(v -> analyzeCurrentImage());
         infoButton.setOnClickListener(v -> showImageInfo());
         canvasButton.setOnClickListener(v -> togglePreviewMode());
-        benchButton.setOnClickListener(v -> runAnalyzerBenchmark());
+        benchButton.setOnClickListener(v -> runAnalyzerBenchmarkWithPermission());
         fastButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_FAST));
         naturalButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_NATURAL));
         exportButton.setOnClickListener(v -> exportPlan());
@@ -149,6 +154,42 @@ public final class MainActivity extends Activity {
                 status.setText("Import failed: " + e.getMessage());
             }
         }
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_BENCH_PERMISSION) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            RuntimeLog.line("benchmark_permission", granted ? "granted" : "denied");
+            if (granted) {
+                runAnalyzerBenchmark();
+            } else {
+                status.setText("Image permission denied. Enable Photos/Images permission for SolumDraw, then tap Bench again.");
+            }
+        }
+    }
+
+    private boolean hasBenchImagePermission() {
+        String permission = benchPermissionName();
+        if (permission == null) return true;
+        return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private String benchPermissionName() {
+        if (Build.VERSION.SDK_INT >= 33) return Manifest.permission.READ_MEDIA_IMAGES;
+        if (Build.VERSION.SDK_INT >= 23) return Manifest.permission.READ_EXTERNAL_STORAGE;
+        return null;
+    }
+
+    private void runAnalyzerBenchmarkWithPermission() {
+        if (!hasBenchImagePermission()) {
+            String permission = benchPermissionName();
+            status.setText("Need image permission for Benchmark. Confirm permission, then Bench will run.");
+            RuntimeLog.line("benchmark_permission", "request " + permission);
+            requestPermissions(new String[] { permission }, REQUEST_BENCH_PERMISSION);
+            return;
+        }
+        runAnalyzerBenchmark();
     }
 
     private void analyzeCurrentImage() {
