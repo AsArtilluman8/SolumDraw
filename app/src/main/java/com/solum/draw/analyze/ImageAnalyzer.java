@@ -72,7 +72,7 @@ public final class ImageAnalyzer {
         float whitePaperRatio = nearWhite / (float) n;
         float blackInkRatio = nearBlack / (float) n;
 
-        String genre = detectGenre(name, edgeDensity, detailDensity, skinRatio, textRatio, avgSat, palette.size(), paletteCompactness, darkRatio, brightRatio, whitePaperRatio, blackInkRatio);
+        String genre = detectGenre(edgeDensity, detailDensity, skinRatio, textRatio, avgSat, palette.size(), paletteCompactness, darkRatio, brightRatio, whitePaperRatio, blackInkRatio);
         float confidence = confidenceFor(genre, edgeDensity, detailDensity, skinRatio, textRatio, avgSat, paletteCompactness, whitePaperRatio);
         String strategy = strategyFor(genre, edgeDensity, detailDensity);
         String warnings = warningsFor(edgeDensity, detailDensity, skinRatio, textRatio, paletteCompactness, whitePaperRatio);
@@ -101,15 +101,7 @@ public final class ImageAnalyzer {
         return list;
     }
 
-    private static String detectGenre(String name, float edge, float detail, float skin, float text, float sat, int colors, float compact, float dark, float bright, float paper, float ink) {
-        String lower = name == null ? "" : name.toLowerCase(java.util.Locale.US);
-        if (lower.contains("anime") || lower.contains("cartoon")) return "anime_cartoon_flat";
-        if (lower.contains("sketch") || lower.contains("lineart") || lower.contains("line_art")) return "sketch_lineart";
-        if (lower.contains("wallpaper")) return "wallpaper_art";
-        if (lower.contains("vector")) return "vector_flat_art";
-        if (lower.contains("ui") || lower.contains("screenshot") || lower.contains("text")) return "ui_or_text_heavy";
-        if (lower.contains("logo") || lower.contains("icon")) return "logo_icon_flat";
-
+    private static String detectGenre(float edge, float detail, float skin, float text, float sat, int colors, float compact, float dark, float bright, float paper, float ink) {
         if (paper > 0.46f && edge > 0.13f && sat < 0.20f) return "sketch_lineart";
         if (text > 0.16f && edge > 0.22f) return "ui_or_text_heavy";
         if (skin > 0.10f && edge < 0.30f) return "portrait_or_skin_photo";
