@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SolumDraw dataset validator v1.
+SolumDraw dataset validator v1.1.
 
 Input:
   /storage/emulated/0/Download/SolumDrawDatasets/gallery_v1/metadata.jsonl
@@ -11,10 +11,9 @@ Output next to metadata:
   analyzer_manifest.tsv
 
 Goal:
-  keep the dataset honest. This script does not pretend to know image content.
-  It checks metadata/prompt/source quality and flags mismatch risk.
+  keep the dataset honest and make the HTML report self-contained.
 """
-import argparse, json, os, re
+import argparse, base64, json, mimetypes
 from pathlib import Path
 
 EXPECTED = {
@@ -32,6 +31,7 @@ EXPECTED = {
 
 PLACEHOLDER_HOSTS = ['picsum.photos','placehold.co','placeholder.com','loremflickr.com']
 MIN_BYTES = 8000
+MAX_EMBED_BYTES = 900_000
 
 
 def load_jsonl(path):
@@ -78,6 +78,22 @@ def validate_record(r):
     return {**r, 'validation': {'risk': risk, 'flags': flags, 'prompt_hits': hit_words}}
 
 
+def image_data_uri(path):
+    if not path:
+        return ''
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return ''
+    try:
+        if p.stat().st_size > MAX_EMBED_BYTES:
+            return ''
+        mime = mimetypes.guess_type(str(p))[0] or 'image/jpeg'
+        data = base64.b64encode(p.read_bytes()).decode('ascii')
+        return f'data:{mime};base64,{data}'
+    except Exception:
+        return ''
+
+
 def write_html(root, rows):
     def esc(s):
         import html
@@ -85,11 +101,11 @@ def write_html(root, rows):
     trs = []
     for r in rows:
         v = r['validation']
-        rel = r.get('rel','')
-        img = f"<img src='{esc(rel)}'>" if rel else ''
+        uri = image_data_uri(r.get('file',''))
+        img = f"<img src='{uri}'>" if uri else '<span class=bad>no preview</span>'
         trs.append(f"<tr class='{esc(v['risk'])}'><td>{esc(v['risk'])}</td><td>{esc(r.get('genre'))}</td><td>{img}</td><td>{esc(', '.join(v['flags']))}</td><td>{esc(r.get('prompt'))}</td><td>{esc(r.get('url'))}</td></tr>")
-    css = "body{font-family:monospace;background:#080808;color:#eee;padding:14px}img{width:160px;border-radius:8px}td,th{border:1px solid #333;padding:6px;vertical-align:top}table{border-collapse:collapse;width:100%}.high{background:#361010}.medium{background:#332a10}.low{background:#102414}"
-    text = f"<!doctype html><meta charset='utf-8'><style>{css}</style><h1>SolumDraw Dataset Validation</h1><p>items={len(rows)}</p><table><tr><th>risk</th><th>genre</th><th>image</th><th>flags</th><th>prompt</th><th>url</th></tr>{''.join(trs)}</table>"
+    css = "body{font-family:monospace;background:#080808;color:#eee;padding:14px}img{width:160px;border-radius:8px}td,th{border:1px solid #333;padding:6px;vertical-align:top}table{border-collapse:collapse;width:100%}.high{background:#361010}.medium{background:#332a10}.low{background:#102414}.bad{color:#ff7070}"
+    text = f"<!doctype html><meta charset='utf-8'><style>{css}</style><h1>SolumDraw Dataset Validation</h1><p>items={len(rows)} / embedded base64 previews</p><table><tr><th>risk</th><th>genre</th><th>image</th><th>flags</th><th>prompt</th><th>url</th></tr>{''.join(trs)}</table>"
     (root/'validation_report.html').write_text(text, 'utf-8')
 
 
@@ -107,7 +123,8 @@ def main():
         f.write('# file\texpected_genre\tprompt\trisk\tflags\n')
         for r in rows:
             v = r['validation']
-            f.write(f"{r.get('file','')}\t{r.get('genre','')}\t{r.get('prompt','').replace(chr(9),' ')}\t{v['risk']}\t{','.join(v['flags'])}\n")
+            prompt = r.get('prompt','').replace('\t',' ')
+            f.write(f"{r.get('file','')}\t{r.get('genre','')}\t{prompt}\t{v['risk']}\t{','.join(v['flags'])}\n")
     write_html(root, rows)
     summary = {k: sum(1 for r in rows if r['validation']['risk']==k) for k in ['low','medium','high']}
     print('DONE')
