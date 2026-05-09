@@ -16,6 +16,7 @@ public final class StrokePreviewView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Bitmap sourceImage;
     private StrokePlan plan;
+    private boolean showSourceOverlay = true;
 
     public StrokePreviewView(Context context) {
         super(context);
@@ -34,29 +35,69 @@ public final class StrokePreviewView extends View {
         invalidate();
     }
 
+    public String togglePreviewMode() {
+        showSourceOverlay = !showSourceOverlay;
+        invalidate();
+        return showSourceOverlay ? "Source overlay" : "White canvas";
+    }
+
+    public String previewModeName() {
+        return showSourceOverlay ? "Source overlay" : "White canvas";
+    }
+
+    public Rect currentImageRect() {
+        if (sourceImage == null) {
+            return new Rect(0, 0, Math.max(1, getWidth()), Math.max(1, getHeight()));
+        }
+        return fitRect(sourceImage.getWidth(), sourceImage.getHeight(), Math.max(1, getWidth()), Math.max(1, getHeight()));
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        if (sourceImage != null) {
-            Rect dst = fitRect(sourceImage.getWidth(), sourceImage.getHeight(), getWidth(), getHeight());
-            paint.setAlpha(48);
-            canvas.drawBitmap(sourceImage, null, dst, paint);
-            paint.setAlpha(255);
-        }
+        Rect dst = currentImageRect();
+        drawPreviewSurface(canvas, dst);
 
         if (plan != null) {
+            canvas.save();
+            canvas.clipRect(dst);
+            canvas.translate(dst.left, dst.top);
             drawPlan(canvas, plan);
+            canvas.restore();
         }
 
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.WHITE);
+        paint.setColor(showSourceOverlay ? Color.WHITE : Color.rgb(20, 24, 32));
         paint.setTextSize(26f);
-        canvas.drawText("SolumDraw preview", 24f, 40f, paint);
+        canvas.drawText("SolumDraw preview - " + previewModeName(), 24f, 40f, paint);
+    }
+
+    private void drawPreviewSurface(Canvas canvas, Rect dst) {
+        paint.setStyle(Paint.Style.FILL);
+        if (showSourceOverlay && sourceImage != null) {
+            paint.setColor(Color.rgb(16, 18, 24));
+            canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
+            paint.setAlpha(64);
+            canvas.drawBitmap(sourceImage, null, dst, paint);
+            paint.setAlpha(255);
+        } else {
+            paint.setColor(Color.rgb(238, 238, 232));
+            canvas.drawRect(dst, paint);
+            paint.setColor(Color.rgb(42, 44, 50));
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(2f);
+            canvas.drawRect(dst, paint);
+            paint.setStyle(Paint.Style.FILL);
+        }
     }
 
     private void drawPlan(Canvas canvas, StrokePlan plan) {
         for (StrokeAction action : plan.actions) {
-            paint.setColor(action.color);
+            if (showSourceOverlay && isSuppressedPreviewStroke(action)) {
+                continue;
+            }
+            int color = showSourceOverlay ? action.color : contrastForWhiteCanvas(action.color);
+            paint.setColor(color);
             paint.setStrokeWidth(action.size);
             paint.setStyle(Paint.Style.STROKE);
 
@@ -75,6 +116,25 @@ public final class StrokePreviewView extends View {
                 canvas.drawPath(path, paint);
             }
         }
+    }
+
+    private static int contrastForWhiteCanvas(int color) {
+        int r = Color.red(color);
+        int g = Color.green(color);
+        int b = Color.blue(color);
+        int luma = (r * 30 + g * 59 + b * 11) / 100;
+        if (luma > 210) {
+            return Color.rgb(80, 80, 80);
+        }
+        return color;
+    }
+
+    private static boolean isSuppressedPreviewStroke(StrokeAction action) {
+        int r = Color.red(action.color);
+        int g = Color.green(action.color);
+        int b = Color.blue(action.color);
+        int luma = (r * 30 + g * 59 + b * 11) / 100;
+        return luma < 16 && action.stage.startsWith("SCULPTOR");
     }
 
     private static Rect fitRect(int imageWidth, int imageHeight, int viewWidth, int viewHeight) {
