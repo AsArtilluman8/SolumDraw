@@ -29,13 +29,15 @@ public final class AnalysisVisualReport {
         dir.mkdirs();
         AnalysisLayers layers = AnalysisLayers.build(source);
         ComponentRoleMap roles = ComponentRoleMap.build(source, layers, analysis);
+        UiLayoutAnalysis ui = UiLayoutAnalysis.analyze(source);
         Bitmap original = scaleMax(source, MAX_SIDE);
-        Bitmap overlay = overlay(source, analysis, layers, roles);
+        Bitmap overlay = overlay(source, analysis, layers, roles, ui);
         Bitmap attention = scaleMax(layers.makeAttentionBitmap(source), MAX_SIDE);
         Bitmap edges = scaleMax(layers.makeEdgeBitmap(), MAX_SIDE);
         Bitmap components = scaleMax(layers.makeComponentsBitmap(), MAX_SIDE);
         Bitmap roleMap = scaleMax(roles.makeRoleBitmap(source, layers), MAX_SIDE);
         Bitmap drawOrder = scaleMax(roles.makeDrawOrderBitmap(source, layers), MAX_SIDE);
+        Bitmap uiMap = scaleMax(ui.makeUiMap(source), MAX_SIDE);
         Bitmap priority = scaleMax(layers.makePriorityBitmap(source), MAX_SIDE);
         Bitmap histogram = histogramBitmap(layers);
         Bitmap palette = paletteBitmap(layers);
@@ -47,14 +49,16 @@ public final class AnalysisVisualReport {
         savePng(components, new File(dir, "03_components_map.png"));
         savePng(roleMap, new File(dir, "04_role_map.png"));
         savePng(drawOrder, new File(dir, "05_draw_order_map.png"));
-        savePng(histogram, new File(dir, "06_histogram.png"));
-        savePng(palette, new File(dir, "07_palette_kmeans.png"));
-        savePng(priority, new File(dir, "08_priority_overlay.png"));
+        savePng(uiMap, new File(dir, "06_ui_layout_map.png"));
+        savePng(histogram, new File(dir, "07_histogram.png"));
+        savePng(palette, new File(dir, "08_palette_kmeans.png"));
+        savePng(priority, new File(dir, "09_priority_overlay.png"));
         savePng(side, new File(dir, "analysis_side_by_side.png"));
         writeText(new File(dir, "analysis.json"), analysis.toJson());
         writeText(new File(dir, "layers.json"), layers.metricsJson());
         writeText(new File(dir, "component_roles.json"), roles.toJson());
-        writeText(new File(dir, "analysis_report.html"), html(analysis, layers, roles));
+        writeText(new File(dir, "ui_layout.json"), ui.toJson());
+        writeText(new File(dir, "analysis_report.html"), html(analysis, layers, roles, ui));
         File zip = new File(downloads, dir.getName() + ".zip");
         zipDir(dir, zip);
         return new Result(dir.getAbsolutePath(), new File(dir, "analysis_report.html").getAbsolutePath(), zip.getAbsolutePath());
@@ -62,14 +66,16 @@ public final class AnalysisVisualReport {
 
     public static Bitmap overlay(Bitmap source, ImageAnalysis a) {
         AnalysisLayers layers = AnalysisLayers.build(source);
-        return overlay(source, a, layers, ComponentRoleMap.build(source, layers, a));
+        UiLayoutAnalysis ui = UiLayoutAnalysis.analyze(source);
+        return overlay(source, a, layers, ComponentRoleMap.build(source, layers, a), ui);
     }
 
     public static Bitmap overlay(Bitmap source, ImageAnalysis a, AnalysisLayers layers) {
-        return overlay(source, a, layers, ComponentRoleMap.build(source, layers, a));
+        UiLayoutAnalysis ui = UiLayoutAnalysis.analyze(source);
+        return overlay(source, a, layers, ComponentRoleMap.build(source, layers, a), ui);
     }
 
-    private static Bitmap overlay(Bitmap source, ImageAnalysis a, AnalysisLayers layers, ComponentRoleMap roles) {
+    private static Bitmap overlay(Bitmap source, ImageAnalysis a, AnalysisLayers layers, ComponentRoleMap roles, UiLayoutAnalysis ui) {
         Bitmap bmp = scaleMax(source, 720).copy(Bitmap.Config.ARGB_8888, true);
         Canvas c = new Canvas(bmp);
         float sx = bmp.getWidth() / (float) layers.width;
@@ -84,6 +90,16 @@ public final class AnalysisVisualReport {
         text.setColor(Color.WHITE);
         text.setTextSize(Math.max(16f, bmp.getWidth() / 30f));
         text.setFakeBoldText(true);
+        if (ui.isUiScreenshot) {
+            float ux = bmp.getWidth() / 256f;
+            float uy = bmp.getHeight() / Math.max(1f, 256f * bmp.getHeight() / Math.max(1f, bmp.getWidth()));
+            // Use proportional scale from original UI map dimensions by recomputing source-scale target.
+            for (UiLayoutAnalysis.Region r : ui.regions) {
+                RectF rr = scaleUiRect(r.rect, source, bmp);
+                drawMark(c, stroke, labelBg, text, rr, r.role, uiColor(r.role), bmp.getWidth());
+            }
+            return bmp;
+        }
         int shown = 0;
         for (ComponentRoleMap.Item item : roles.items) {
             if (item.role.equals(ComponentRoleMap.NOISE_IGNORE)) continue;
@@ -102,6 +118,15 @@ public final class AnalysisVisualReport {
         return "visuals/" + out.getName();
     }
 
+    private static RectF scaleUiRect(RectF rect, Bitmap source, Bitmap target) {
+        float scale = Math.min(1f, 256f / (float)Math.max(source.getWidth(), source.getHeight()));
+        float uw = Math.max(1, Math.round(source.getWidth() * scale));
+        float uh = Math.max(1, Math.round(source.getHeight() * scale));
+        float sx = target.getWidth() / uw;
+        float sy = target.getHeight() / uh;
+        return new RectF(rect.left * sx, rect.top * sy, rect.right * sx, rect.bottom * sy);
+    }
+
     private static void drawMark(Canvas c, Paint stroke, Paint labelBg, Paint text, RectF rect, String label, int color, int maxW) {
         stroke.setColor(color);
         c.drawRect(rect, stroke);
@@ -118,6 +143,16 @@ public final class AnalysisVisualReport {
         if (role.equals(ComponentRoleMap.EDGE_HIGHLIGHT)) return 0xFF69F0AE;
         if (role.equals(ComponentRoleMap.TEXT)) return 0xFFFF4D6D;
         return 0xFF666666;
+    }
+
+    private static int uiColor(String role) {
+        if (role.equals(UiLayoutAnalysis.TOP_HUD)) return 0xFF00E5FF;
+        if (role.equals(UiLayoutAnalysis.LEFT_PANEL)) return 0xFFB388FF;
+        if (role.equals(UiLayoutAnalysis.RIGHT_GIZMO)) return 0xFFFFAA00;
+        if (role.equals(UiLayoutAnalysis.BOTTOM_TOOLBAR)) return 0xFF69F0AE;
+        if (role.equals(UiLayoutAnalysis.SCENE_VIEWPORT)) return 0xFF4D7CFF;
+        if (role.equals(UiLayoutAnalysis.BRUSH_CURSOR)) return 0xFFFF4D6D;
+        return 0xFFFFFFFF;
     }
 
     private static Bitmap histogramBitmap(AnalysisLayers l) {
@@ -168,38 +203,41 @@ public final class AnalysisVisualReport {
         Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(out); c.drawColor(0xFF11151C); c.drawBitmap(original,0,0,null); c.drawBitmap(overlay,original.getWidth(),0,null); return out;
     }
 
-    private static String html(ImageAnalysis a, AnalysisLayers l, ComponentRoleMap roles) {
+    private static String html(ImageAnalysis a, AnalysisLayers l, ComponentRoleMap roles, UiLayoutAnalysis ui) {
         StringBuilder b = new StringBuilder();
         b.append("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>");
         b.append("body{font-family:monospace;background:#080808;color:#ececec;padding:14px}h1{color:#00ff88}.sl{color:#00ff88;letter-spacing:.22em;font-size:11px;margin:22px 0 8px;text-transform:uppercase}.card{background:#111;border:1px solid #252525;border-radius:10px;padding:12px;margin:10px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}img{width:100%;border-radius:8px;background:#000}.tag{display:inline-block;border:1px solid #00ff8840;color:#00ff88;border-radius:4px;padding:5px 8px;margin:3px;font-size:11px}.metric{display:grid;grid-template-columns:1fr 1fr;gap:6px}.m{background:#0f0f0f;border:1px solid #1c1c1c;border-radius:6px;padding:8px}.json{white-space:pre-wrap;font-size:11px;overflow:auto}table{width:100%;border-collapse:collapse;font-size:11px}td,th{border:1px solid #272727;padding:5px;text-align:left}</style></head><body>");
-        b.append("<h1>SolumDraw / Component Roles Analysis</h1>");
-        b.append("<div class=card><b>").append(esc(a.genre)).append("</b> conf ").append(pct(a.confidence)).append("<br>").append(esc(firstImpression(a))).append("<br><br><b>Draw plan:</b> ").append(esc(roles.drawPlan)).append("</div>");
+        b.append("<h1>SolumDraw / UI Layout + Component Roles</h1>");
+        b.append("<div class=card><b>").append(esc(a.genre)).append("</b> conf ").append(pct(a.confidence)).append("<br>").append(esc(firstImpression(a, ui))).append("<br><br><b>UI:</b> ").append(esc(ui.summary())).append("<br><b>Draw plan:</b> ").append(esc(roles.drawPlan)).append("</div>");
         b.append("<div class=sl>WHAT I SEE</div><div class=card>");
-        for (String tag : tags(a)) b.append("<span class=tag>").append(esc(tag)).append("</span>");
+        for (String tag : tags(a, ui)) b.append("<span class=tag>").append(esc(tag)).append("</span>");
         b.append("</div>");
         b.append("<div class=sl>VISUAL LAYERS</div><div class=grid>");
-        card(b, "Original", "original.png"); card(b, "Final overlay", "analysis_overlay.png"); card(b, "Attention map", "01_attention_map.png"); card(b, "Sobel edges", "02_edges_sobel.png"); card(b, "Components", "03_components_map.png"); card(b, "Role map", "04_role_map.png"); card(b, "Draw order", "05_draw_order_map.png"); card(b, "Histogram", "06_histogram.png"); card(b, "K-Means palette", "07_palette_kmeans.png"); card(b, "Priority overlay", "08_priority_overlay.png"); card(b, "Side by side", "analysis_side_by_side.png");
+        card(b, "Original", "original.png"); card(b, "Final overlay", "analysis_overlay.png"); card(b, "Attention map", "01_attention_map.png"); card(b, "Sobel edges", "02_edges_sobel.png"); card(b, "Components", "03_components_map.png"); card(b, "Role map", "04_role_map.png"); card(b, "Draw order", "05_draw_order_map.png"); card(b, "UI layout", "06_ui_layout_map.png"); card(b, "Histogram", "07_histogram.png"); card(b, "K-Means palette", "08_palette_kmeans.png"); card(b, "Priority overlay", "09_priority_overlay.png"); card(b, "Side by side", "analysis_side_by_side.png");
         b.append("</div>");
         b.append("<div class=sl>FEATURE VECTOR</div><div class='card metric'>");
-        metric(b,"edge",a.edgeDensity); metric(b,"detail",a.detailDensity); metric(b,"realText",a.realTextRatio); metric(b,"glyph",a.glyphRatio); metric(b,"logo",a.logoScore); metric(b,"saliency",a.saliencyDensity); metric(b,"centralObject",a.centralObjectRatio); metric(b,"symmetry",a.symmetryVertical); metric(b,"components",a.componentCount/100f); metric(b,"textCand",a.textComponentCount/100f); metric(b,"textLines",a.textLineCount/10f); metric(b,"largestComp",a.largestComponentRatio);
+        metric(b,"uiScore",ui.uiScore); metric(b,"panelScore",ui.panelScore); metric(b,"uiText",ui.textScore); metric(b,"toolbar",ui.toolbarScore); metric(b,"scene",ui.sceneScore); metric(b,"edge",a.edgeDensity); metric(b,"realText",a.realTextRatio); metric(b,"glyph",a.glyphRatio); metric(b,"logo",a.logoScore); metric(b,"components",a.componentCount/100f); metric(b,"textLines",a.textLineCount/10f);
         b.append("</div>");
         b.append("<div class=sl>COMPONENT ROLES</div><div class=card>").append(roles.roleSummaryHtml()).append("</div>");
         b.append("<div class=sl>WHY PREDICTED</div><div class=card>").append(esc(a.strategy)).append("<br>warnings: ").append(esc(a.warnings)).append("</div>");
-        b.append("<div class=sl>JSON</div><div class='card json'>").append(esc(a.toJson())).append("\n\n").append(esc(l.metricsJson())).append("\n\n").append(esc(roles.toJson())).append("</div>");
+        b.append("<div class=sl>JSON</div><div class='card json'>").append(esc(a.toJson())).append("\n\n").append(esc(l.metricsJson())).append("\n\n").append(esc(roles.toJson())).append("\n\n").append(esc(ui.toJson())).append("</div>");
         b.append("</body></html>");
         return b.toString();
     }
 
-    private static String firstImpression(ImageAnalysis a) {
+    private static String firstImpression(ImageAnalysis a, UiLayoutAnalysis ui) {
+        if (a.genre.equals("game_engine_ui")) return "Engine/editor screenshot: separate scene viewport from HUD, panels, toolbar, gizmo, brush cursor and text labels.";
+        if (a.genre.equals("ui_screenshot")) return "UI screenshot: detect layout panels, cards, buttons, icons and verified text rows.";
         if (a.genre.equals("logo_icon_flat")) return "Logo/symbol image: split into background, glow/accent mass, main symbol, inner cuts, edge highlights and polish noise.";
         if (a.realTextRatio > 0.18f && a.textLineCount >= 2) return "Text/UI-heavy image: panel blocks and verified text components should be isolated before drawing.";
         if (a.skinRatio > 0.10f) return "Portrait/skin-like image: face/skin mass has high priority.";
         return "General image: use components, attention regions, palette clusters and Sobel edges for drawing order.";
     }
 
-    private static List<String> tags(ImageAnalysis a) {
+    private static List<String> tags(ImageAnalysis a, UiLayoutAnalysis ui) {
         ArrayList<String> t = new ArrayList<>();
-        t.add(a.genre); if (a.logoScore > .34f) t.add("logo-score"); if (a.glyphRatio > .25f) t.add("glyph/symbol"); if (a.realTextRatio > .16f && a.textLineCount >= 2) t.add("verified-text"); if (a.componentCount > 0) t.add("components:" + a.componentCount); if (a.textComponentCount > 0) t.add("textCand:" + a.textComponentCount); if (a.saliencyDensity > .18f) t.add("attention-zones"); if (a.symmetryVertical > .40f) t.add("symmetry"); if (a.darkRatio > .45f) t.add("dark-bg"); if (a.brightRatio > .10f) t.add("bright-accents"); return t;
+        t.add(a.genre); if (ui.isUiScreenshot) { t.add("ui-layout"); t.add(ui.subgenre); t.add("uiScore:" + pct(ui.uiScore)); }
+        if (a.logoScore > .34f) t.add("logo-score"); if (a.glyphRatio > .25f) t.add("glyph/symbol"); if (a.realTextRatio > .16f && a.textLineCount >= 2) t.add("verified-text"); if (a.componentCount > 0) t.add("components:" + a.componentCount); if (a.textComponentCount > 0) t.add("textCand:" + a.textComponentCount); if (a.saliencyDensity > .18f) t.add("attention-zones"); if (a.symmetryVertical > .40f) t.add("symmetry"); if (a.darkRatio > .45f) t.add("dark-bg"); if (a.brightRatio > .10f) t.add("bright-accents"); return t;
     }
 
     private static void card(StringBuilder b, String title, String img) { b.append("<div class=card><b>").append(esc(title)).append("</b><br><img src=\"").append(img).append("\"></div>"); }
