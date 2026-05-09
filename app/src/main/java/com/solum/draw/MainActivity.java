@@ -22,6 +22,7 @@ import com.solum.draw.planner.StrokePlanJson;
 import com.solum.draw.preview.StrokePreviewView;
 import com.solum.draw.reconstruct.ErrorMap;
 import com.solum.draw.reconstruct.ReconstructionMetrics;
+import com.solum.draw.reconstruct.ResidualPlanner;
 import com.solum.draw.reconstruct.TargetImage;
 import com.solum.draw.reconstruct.VirtualCanvas;
 import java.io.File;
@@ -39,7 +40,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 04C started");
+        RuntimeLog.line("boot", "SolumDraw Patch 04D started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -50,7 +51,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(0xFFFFFFFF);
         status.setTextSize(14f);
         status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw Patch 04C: virtual canvas + error map");
+        status.setText("SolumDraw Patch 04D: dense residual pass v1");
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -159,10 +160,12 @@ public final class MainActivity extends Activity {
             int width = Math.max(1, imageRect.width());
             int height = Math.max(1, imageRect.height());
             long start = System.currentTimeMillis();
-            currentPlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
+            StrokePlan basePlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
+            ResidualPlanner.Result residual = ResidualPlanner.addResidualStrokes(sourceImage, basePlan, mode, width, height);
+            currentPlan = residual.plan;
             long ms = System.currentTimeMillis() - start;
             previewView.setPlan(currentPlan);
-            lastReconstructionSummary = runVirtualCanvasMetrics(currentPlan);
+            lastReconstructionSummary = residual.summary() + " | " + runVirtualCanvasMetrics(currentPlan);
 
             String summary = "Plan " + mode.name()
                     + " | actions=" + currentPlan.actions.size()
@@ -171,9 +174,9 @@ public final class MainActivity extends Activity {
                     + " Potter=" + currentPlan.countStagePrefix("POTTER")
                     + " Grinder=" + currentPlan.countStagePrefix("GRINDER")
                     + " Polisher=" + currentPlan.countStagePrefix("POLISHER")
-                    + " | " + lastReconstructionSummary;
+                    + " | " + residual.summary();
             status.setText(summary);
-            RuntimeLog.line("build_plan", summary);
+            RuntimeLog.line("build_plan", summary + " | " + lastReconstructionSummary);
         } catch (Exception e) {
             CrashLogger.logHandledError("build_plan_" + mode.name(), e);
             RuntimeLog.error("build_plan_" + mode.name(), e);
@@ -218,7 +221,7 @@ public final class MainActivity extends Activity {
         }
 
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04c.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04d.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
