@@ -45,21 +45,27 @@ public final class DrawingIntentAnalysis {
     }
 
     public static DrawingIntentAnalysis build(ImageAnalysis a, AnalysisLayers layers, ComponentRoleMap roles, UiLayoutAnalysis ui) {
-        float uiPenaltyFromCharacter = Math.max(0f, a.skinRatio * 1.15f + a.centralObjectRatio * 0.28f);
-        float uiEvidence = clamp01(ui.uiScore * 0.70f + (a.genre.equals("game_engine_ui") || a.genre.equals("ui_screenshot") ? 0.22f : 0f) - uiPenaltyFromCharacter);
-        float textEvidence = clamp01((a.realTextRatio * 0.80f) + Math.min(0.36f, a.textLineCount * 0.04f) + ui.textScore * 0.18f);
-        float logoEvidence = clamp01(a.logoScore * 0.72f + a.glyphRatio * 0.28f + (a.genre.equals("logo_icon_flat") ? 0.20f : 0f));
+        float centeredSubject = clamp01(a.centralObjectRatio * 2.10f + a.symmetryVertical * 0.22f + a.largestComponentRatio * 1.60f);
+        float naturalTexture = clamp01(a.detailDensity * 0.75f + a.edgeDensity * 0.32f + Math.max(0f, 0.24f - a.paletteCompactness) * 0.35f);
+        float flatGraphic = clamp01(a.paletteCompactness * 0.85f + Math.max(0f, 0.22f - a.detailDensity) + Math.max(0f, a.saturation - 0.16f) * 0.40f);
+        float realUiControls = clamp01(ui.panelScore * 0.33f + ui.toolbarScore * 0.29f + ui.textScore * 0.16f + Math.min(0.26f, a.textLineCount * 0.018f));
+        float falseUiPenalty = clamp01(centeredSubject * 0.34f + naturalTexture * 0.28f + a.skinRatio * 1.25f + Math.max(0f, a.glyphRatio - 0.45f) * 0.20f);
+        float falseLogoPenalty = clamp01(naturalTexture * 0.48f + ui.uiScore * 0.16f + a.detailDensity * 0.34f + Math.max(0f, a.componentCount - 18) / 80f);
+
+        float uiEvidence = clamp01(realUiControls * 0.75f + (a.genre.equals("game_engine_ui") || a.genre.equals("ui_screenshot") ? 0.18f : 0f) - falseUiPenalty * 0.58f);
+        float textEvidence = clamp01((a.realTextRatio * 0.70f) + Math.min(0.28f, a.textLineCount * 0.032f) + ui.textScore * 0.11f);
+        float logoEvidence = clamp01(a.logoScore * 0.58f + a.glyphRatio * 0.20f + flatGraphic * 0.20f + (a.genre.equals("logo_icon_flat") ? 0.18f : 0f) - falseLogoPenalty * 0.55f);
         float sketchEvidence = clamp01((a.genre.equals("sketch_lineart") ? 0.40f : 0f) + a.edgeDensity * 0.55f + Math.max(0f, 0.24f - a.saturation));
-        float vectorEvidence = clamp01((a.genre.equals("vector_flat_art") ? 0.40f : 0f) + a.paletteCompactness * 0.55f + a.saturation * 0.18f - a.detailDensity * 0.18f);
-        float portraitEvidence = clamp01((a.genre.equals("portrait_or_skin_photo") ? 0.35f : 0f) + a.skinRatio * 2.20f + a.centralObjectRatio * 0.22f);
-        float characterEvidence = clamp01((a.genre.equals("anime_cartoon_flat") ? 0.34f : 0f) + a.centralObjectRatio * 0.32f + a.saturation * 0.28f + a.glyphRatio * 0.08f + Math.max(0f, 0.30f - ui.uiScore));
-        float sceneEvidence = clamp01((a.genre.equals("dark_cinematic") || a.genre.equals("digital_art_wallpaper") || a.genre.equals("general_photo_or_illustration") ? 0.22f : 0f) + a.detailDensity * 0.26f + a.edgeDensity * 0.14f + ui.sceneScore * 0.24f + Math.max(0f, 0.32f - ui.panelScore) * 0.44f);
+        float vectorEvidence = clamp01((a.genre.equals("vector_flat_art") ? 0.40f : 0f) + flatGraphic * 0.62f - naturalTexture * 0.24f);
+        float portraitEvidence = clamp01((a.genre.equals("portrait_or_skin_photo") ? 0.35f : 0f) + a.skinRatio * 2.25f + centeredSubject * 0.22f + a.symmetryVertical * 0.14f - uiEvidence * 0.10f);
+        float characterEvidence = clamp01((a.genre.equals("anime_cartoon_flat") ? 0.34f : 0f) + centeredSubject * 0.38f + a.saturation * 0.20f + Math.max(0f, a.glyphRatio - 0.25f) * 0.10f + a.skinRatio * 0.90f - uiEvidence * 0.14f);
+        float sceneEvidence = clamp01((a.genre.equals("dark_cinematic") || a.genre.equals("digital_art_wallpaper") || a.genre.equals("general_photo_or_illustration") || a.genre.equals("detailed_noisy_photo") ? 0.22f : 0f) + naturalTexture * 0.52f + Math.max(0f, 0.36f - ui.panelScore) * 0.20f + ui.sceneScore * 0.14f - flatGraphic * 0.10f);
 
         String intent = pickIntent(uiEvidence, characterEvidence, portraitEvidence, sceneEvidence, logoEvidence, sketchEvidence, vectorEvidence, textEvidence);
         List<String> layersOut = semanticLayersFor(intent);
         List<String> order = drawOrderFor(intent);
         List<String> hints = hintsFor(intent, a);
-        List<String> risks = risksFor(intent, a, ui, uiEvidence, characterEvidence, sceneEvidence, logoEvidence, textEvidence);
+        List<String> risks = risksFor(intent, a, ui, uiEvidence, characterEvidence, sceneEvidence, logoEvidence, textEvidence, falseUiPenalty, falseLogoPenalty);
         String strategy = strategyFor(intent);
         int actions = estimateActions(intent, a);
         int noiseIgnore = estimateNoiseIgnore(a);
@@ -69,9 +75,12 @@ public final class DrawingIntentAnalysis {
     }
 
     private static String pickIntent(float ui, float character, float portrait, float scene, float logo, float sketch, float vector, float text) {
+        if (character > 0.34f && character >= ui * 0.72f && character >= logo * 0.86f) return "character_silhouette_first";
+        if (portrait > 0.36f && portrait >= ui * 0.70f && portrait >= logo * 0.82f) return "portrait_mass_first";
+        if (scene > 0.34f && scene >= logo * 0.76f && scene >= ui * 0.64f) return "scene_mass_first";
         String best = "general_layered_drawing";
         float score = 0f;
-        if (ui > score) { score = ui; best = ui > 0.70f ? "ui_layout_first" : "ui_candidate_review"; }
+        if (ui > score) { score = ui; best = ui > 0.66f ? "ui_layout_first" : "ui_candidate_review"; }
         if (character > score) { score = character; best = "character_silhouette_first"; }
         if (portrait > score) { score = portrait; best = "portrait_mass_first"; }
         if (scene > score) { score = scene; best = "scene_mass_first"; }
@@ -108,12 +117,12 @@ public final class DrawingIntentAnalysis {
     private static List<String> drawOrderFor(String intent) {
         ArrayList<String> o = new ArrayList<>();
         if (intent.contains("ui") || intent.equals("text_layout_first")) add(o, "background/app backdrop", "main viewport or app content", "large panels", "cards/buttons", "icons", "text labels", "cursor/gizmo", "polish");
-        else if (intent.equals("character_silhouette_first")) add(o, "background", "body silhouette", "large color masses", "outer contour", "face/hair priority details", "clothes details", "highlights", "polish");
+        else if (intent.equals("character_silhouette_first")) add(o, "background", "body/head silhouette", "hair and clothing masses", "outer contour", "face/eyes priority details", "accent marks", "highlights", "polish");
         else if (intent.equals("portrait_mass_first")) add(o, "background", "head/skin masses", "hair mass", "facial structure", "eyes/nose/mouth", "soft shadows", "edge accents", "polish");
         else if (intent.equals("logo_shape_first")) add(o, "background shape", "glow/accent mass", "main symbol", "inner cuts", "crisp edges", "highlights", "texture/noise only if useful");
         else if (intent.equals("contour_lineart_first")) add(o, "main contours", "big structure lines", "secondary contours", "small details", "cleanup", "polish");
         else if (intent.equals("flat_shape_first")) add(o, "largest flat shapes", "medium color regions", "clean boundaries", "accent shapes", "small details", "polish");
-        else if (intent.equals("scene_mass_first")) add(o, "far background", "large scene masses", "perspective structure", "main objects", "light/shadow blocks", "detail clusters", "polish");
+        else if (intent.equals("scene_mass_first")) add(o, "far background/atmosphere", "large tree/building/terrain masses", "depth and perspective structure", "main subject silhouette", "light/shadow blocks", "detail clusters", "polish");
         else add(o, "background", "large masses", "main subject", "outer contour", "inner detail", "highlight", "polish");
         return o;
     }
@@ -131,11 +140,13 @@ public final class DrawingIntentAnalysis {
         return h;
     }
 
-    private static List<String> risksFor(String intent, ImageAnalysis a, UiLayoutAnalysis ui, float uiEv, float charEv, float sceneEv, float logoEv, float textEv) {
+    private static List<String> risksFor(String intent, ImageAnalysis a, UiLayoutAnalysis ui, float uiEv, float charEv, float sceneEv, float logoEv, float textEv, float falseUiPenalty, float falseLogoPenalty) {
         ArrayList<String> r = new ArrayList<>();
-        if (uiEv > 0.55f && (charEv > 0.42f || sceneEv > 0.42f)) r.add("UI false-positive risk: image may be character/scene with text or panel-like shapes.");
-        if (textEv > 0.50f && a.textLineCount <= 1) r.add("Text evidence is weak: likely glyph/logo or edge rows, not real text.");
-        if (logoEv > 0.45f && uiEv > 0.45f) r.add("Logo/UI ambiguity: check whether central symbol is app icon or editor viewport.");
+        if (falseUiPenalty > 0.32f) r.add("Anti-UI fired: centered subject/natural texture/skin makes UI classification risky.");
+        if (falseLogoPenalty > 0.34f) r.add("Anti-logo fired: natural texture/detail makes logo/symbol classification risky.");
+        if (uiEv > 0.48f && (charEv > 0.30f || sceneEv > 0.30f)) r.add("UI false-positive risk: image may be character/scene with text or panel-like shapes.");
+        if (textEv > 0.46f && a.textLineCount <= 1) r.add("Text evidence is weak: likely glyph/logo or edge rows, not real text.");
+        if (logoEv > 0.38f && (sceneEv > 0.28f || uiEv > 0.38f)) r.add("Logo ambiguity: check if large contrast is natural object, character feature, or app icon.");
         if (a.componentCount > 45) r.add("Many components: risk of wasting action budget on tiny islands.");
         if (a.largestComponentRatio < 0.012f && !intent.contains("ui")) r.add("No strong main component: planner should use large color masses before details.");
         if (r.isEmpty()) r.add("No major routing risk detected; still validate with benchmark.");
