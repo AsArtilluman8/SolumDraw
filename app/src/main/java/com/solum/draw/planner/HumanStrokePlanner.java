@@ -33,7 +33,16 @@ public final class HumanStrokePlanner {
         });
 
         int index = 0;
+        int largeMassCount = 0;
         for (ShapeRegion region : regions) {
+            if (shouldSkipRegion(region, small.getWidth(), small.getHeight(), largeMassCount)) {
+                index++;
+                continue;
+            }
+            if (region.isLargeMass(small.getWidth(), small.getHeight())) {
+                largeMassCount++;
+            }
+
             String stage = stageForRegion(region, small.getWidth(), small.getHeight(), index);
             float brush = brushForRegion(region, small.getWidth(), small.getHeight(), index);
             List<PointF> path = regionPath(region, canvasWidth, canvasHeight, small.getWidth(), small.getHeight(), mode, index);
@@ -41,10 +50,10 @@ public final class HumanStrokePlanner {
                 actions.add(new StrokeAction(stage, region.color, brush, path));
             }
 
-            if (needsCoveragePass(region, small.getWidth(), small.getHeight(), mode)) {
+            if (needsCoveragePass(region, small.getWidth(), small.getHeight(), mode, largeMassCount)) {
                 List<PointF> coverage = coveragePath(region, canvasWidth, canvasHeight, small.getWidth(), small.getHeight(), mode, index);
                 if (coverage.size() > 1) {
-                    actions.add(new StrokeAction(stage + "_COVERAGE", soften(region.color), Math.max(brush * 0.72f, 5f), coverage));
+                    actions.add(new StrokeAction(stage + "_COVERAGE", soften(region.color), Math.max(brush * 0.62f, 4.5f), coverage));
                 }
             }
             index++;
@@ -54,6 +63,19 @@ public final class HumanStrokePlanner {
         return new StrokePlan(source.getWidth(), source.getHeight(), mode.name(), actions);
     }
 
+    private static boolean shouldSkipRegion(ShapeRegion region, int imageWidth, int imageHeight, int largeMassCount) {
+        int imageArea = imageWidth * imageHeight;
+        if (largeMassCount >= 2 && region.isLargeMass(imageWidth, imageHeight)) return true;
+        if (isNearFullWidthBand(region, imageWidth, imageHeight)) return true;
+        if (region.pixelCount < 9 && region.area() < 24) return true;
+        if (region.area() > imageArea * 0.22f && region.density() < 0.18f) return true;
+        return false;
+    }
+
+    private static boolean isNearFullWidthBand(ShapeRegion region, int imageWidth, int imageHeight) {
+        return region.width() > imageWidth * 0.72f && region.height() < imageHeight * 0.10f && region.density() > 0.48f;
+    }
+
     private static void addEdgePass(List<StrokeAction> actions, Bitmap small, int canvasWidth, int canvasHeight, DrawMode mode) {
         List<EdgeSegment> edges = EdgeExtractor.extract(small, edgeLimit(mode));
         int index = 0;
@@ -61,7 +83,7 @@ public final class HumanStrokePlanner {
             List<PointF> path = edgePath(edge, canvasWidth, canvasHeight, small.getWidth(), small.getHeight(), mode, index);
             if (path.size() < 2) continue;
             String stage = index < polishStart(mode) ? "GRINDER_EDGE" : "POLISHER_ACCENT_EDGE";
-            float size = index < polishStart(mode) ? 3.2f : 2.1f;
+            float size = index < polishStart(mode) ? 3.0f : 2.0f;
             actions.add(new StrokeAction(stage, edge.color, size, path));
             index++;
         }
@@ -121,22 +143,23 @@ public final class HumanStrokePlanner {
 
     private static float brushForRegion(ShapeRegion region, int imageWidth, int imageHeight, int index) {
         int rank = stageRank(region, imageWidth, imageHeight);
-        if (rank == 0) return Math.max(14f, Math.min(34f, Math.max(region.width(), region.height()) * 0.19f));
-        if (rank == 1) return Math.max(8f, Math.min(19f, Math.max(region.width(), region.height()) * 0.13f));
-        if (rank == 2) return 5.5f;
-        return 3.2f;
+        if (rank == 0) return Math.max(12f, Math.min(28f, Math.max(region.width(), region.height()) * 0.15f));
+        if (rank == 1) return Math.max(7f, Math.min(16f, Math.max(region.width(), region.height()) * 0.10f));
+        if (rank == 2) return 5.0f;
+        return 3.0f;
     }
 
-    private static boolean needsCoveragePass(ShapeRegion region, int imageWidth, int imageHeight, DrawMode mode) {
+    private static boolean needsCoveragePass(ShapeRegion region, int imageWidth, int imageHeight, DrawMode mode, int largeMassCount) {
         if (mode == DrawMode.PRINTER_DEBUG) return false;
+        if (isNearFullWidthBand(region, imageWidth, imageHeight)) return false;
         int rank = stageRank(region, imageWidth, imageHeight);
-        return rank <= 1 && region.area() > 80;
+        return rank <= 1 && region.area() > 130 && largeMassCount <= 2;
     }
 
     private static List<PointF> regionPath(ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode, int seedIndex) {
         List<PointF> points = new ArrayList<>();
 
-        if (region.isLargeMass(imageWidth, imageHeight)) {
+        if (region.isLargeMass(imageWidth, imageHeight) && !isNearFullWidthBand(region, imageWidth, imageHeight)) {
             addBoxSweep(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight, mode);
         }
 
@@ -147,7 +170,9 @@ public final class HumanStrokePlanner {
             points.add(toCanvas(sample.x, sample.y, canvasWidth, canvasHeight, imageWidth, imageHeight));
         }
 
-        addRegionCorners(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight);
+        if (!isNearFullWidthBand(region, imageWidth, imageHeight)) {
+            addRegionCorners(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight);
+        }
 
         if (points.size() < 3) {
             addBoxSweep(points, region, canvasWidth, canvasHeight, imageWidth, imageHeight, mode);
@@ -158,7 +183,7 @@ public final class HumanStrokePlanner {
 
     private static List<PointF> coveragePath(ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode, int seedIndex) {
         List<PointF> points = new ArrayList<>();
-        int lines = Math.max(3, Math.min(10, region.height() / 3));
+        int lines = Math.max(2, Math.min(6, region.height() / 5));
         for (int i = 0; i < lines; i++) {
             int y = region.minY + Math.round((i + 0.5f) * region.height() / lines);
             if (i % 2 == 0) {
@@ -176,7 +201,7 @@ public final class HumanStrokePlanner {
     }
 
     private static void addBoxSweep(List<PointF> points, ShapeRegion region, int canvasWidth, int canvasHeight, int imageWidth, int imageHeight, DrawMode mode) {
-        int lines = Math.max(3, Math.min(8, region.height() / 4));
+        int lines = Math.max(2, Math.min(5, region.height() / 6));
         for (int i = 0; i < lines; i++) {
             int y = region.minY + Math.round((i + 0.5f) * region.height() / lines);
             if (i % 2 == 0) {
@@ -187,7 +212,7 @@ public final class HumanStrokePlanner {
                 points.add(toCanvas(region.minX, y, canvasWidth, canvasHeight, imageWidth, imageHeight));
             }
         }
-        if (mode != DrawMode.HUMAN_FAST) {
+        if (mode == DrawMode.HUMAN_NATURAL) {
             int midX = (region.minX + region.maxX) / 2;
             points.add(toCanvas(midX, region.minY, canvasWidth, canvasHeight, imageWidth, imageHeight));
             points.add(toCanvas(midX, region.maxY, canvasWidth, canvasHeight, imageWidth, imageHeight));
@@ -203,7 +228,7 @@ public final class HumanStrokePlanner {
 
     private static int sampleStride(ShapeRegion region, DrawMode mode) {
         if (mode == DrawMode.PRINTER_DEBUG) return 1;
-        if (mode == DrawMode.HUMAN_FAST) return region.pixelCount > 260 ? 2 : 1;
+        if (mode == DrawMode.HUMAN_FAST) return region.pixelCount > 240 ? 3 : 2;
         return region.pixelCount > 320 ? 2 : 1;
     }
 
