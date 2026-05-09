@@ -6,6 +6,18 @@ Status: current PR.
 
 Goal: create a clean Android/Gradle base with a separated human stroke planner and preview/export loop.
 
+## Patch 02A - Crash debug log
+
+Status: added to current PR before deeper algorithm work.
+
+Goal: every fatal crash should write a readable text report to Download.
+
+Output files:
+
+- `solumdraw_last_boot.txt`
+- `solumdraw_crash_YYYYMMDD_HHMMSS.txt`
+- `solumdraw_crash_YYYYMMDD_HHMMSS_handled.txt`
+
 ## Patch 02 - Real shape extraction
 
 Goal: replace coarse palette point sampling with real image structure.
