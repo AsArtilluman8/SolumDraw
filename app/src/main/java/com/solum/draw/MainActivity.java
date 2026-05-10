@@ -21,6 +21,7 @@ import com.solum.draw.analyze.AnalysisVisualReport;
 import com.solum.draw.analyze.AnalyzerBenchmark;
 import com.solum.draw.analyze.ComponentRoleMap;
 import com.solum.draw.analyze.DrawingIntentAnalysis;
+import com.solum.draw.analyze.EvidenceProfile;
 import com.solum.draw.analyze.ImageAnalysis;
 import com.solum.draw.analyze.ImageAnalyzer;
 import com.solum.draw.analyze.SceneArtHeuristic;
@@ -46,11 +47,9 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_IMAGE = 1001;
     private static final int REQUEST_BENCH_PERMISSION = 2002;
     private static final int BG = 0xFF060B12;
-    private static final int PANEL = 0xCC0D1824;
     private static final int CYAN = 0xFF22E6F2;
     private static final int VIOLET = 0xFF9B6BFF;
     private static final int TEXT = 0xFFE9F7FF;
-    private static final int MUTED = 0xFF89A7B8;
 
     private TextView status;
     private StrokePreviewView previewView;
@@ -64,7 +63,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 19B started");
+        RuntimeLog.line("boot", "SolumDraw Patch 19C evidence started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
@@ -72,22 +71,21 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(BG);
 
         TextView title = new TextView(this);
-        title.setText("S O L U M   D R A W  ·  V I S I O N");
+        title.setText("S O L U M   D R A W  ·  E V I D E N C E");
         title.setTextColor(CYAN);
         title.setTextSize(14f);
         title.setPadding(18, 14, 18, 4);
 
         status = new TextView(this);
         status.setTextColor(TEXT);
-        status.setTextSize(13f);
+        status.setTextSize(12.5f);
         status.setPadding(18, 10, 18, 10);
         status.setBackground(cardBg(0xAA0D1824, CYAN, 1));
-        status.setText("Готово. Import → Analyze → View: Видение / Маршрут / Контуры.");
+        status.setText("Готово. Import → Analyze: честные Raw/Fix баллы. View: Видение / Маршрут / Контуры.");
 
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setPadding(10, 8, 10, 4);
-
         LinearLayout drawBar = new LinearLayout(this);
         drawBar.setOrientation(LinearLayout.HORIZONTAL);
         drawBar.setPadding(10, 4, 10, 8);
@@ -101,14 +99,8 @@ public final class MainActivity extends Activity {
         Button naturalButton = button("Natural", CYAN);
         Button exportButton = button("Export", VIOLET);
 
-        topBar.addView(importButton);
-        topBar.addView(analyzeButton);
-        topBar.addView(infoButton);
-        topBar.addView(canvasButton);
-        topBar.addView(benchButton);
-        drawBar.addView(fastButton);
-        drawBar.addView(naturalButton);
-        drawBar.addView(exportButton);
+        topBar.addView(importButton); topBar.addView(analyzeButton); topBar.addView(infoButton); topBar.addView(canvasButton); topBar.addView(benchButton);
+        drawBar.addView(fastButton); drawBar.addView(naturalButton); drawBar.addView(exportButton);
 
         previewView = new StrokePreviewView(this);
         root.addView(title);
@@ -149,7 +141,6 @@ public final class MainActivity extends Activity {
     }
 
     private void pickImage() {
-        RuntimeLog.line("ui", "pick image requested");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("image/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -158,8 +149,7 @@ public final class MainActivity extends Activity {
 
     private void togglePreviewMode() {
         String mode = previewView.togglePreviewMode();
-        status.setText("Вид: " + mode + "\nAnalyze строит видение, маршрут и контуры.");
-        RuntimeLog.line("preview_mode", mode);
+        status.setText("Вид: " + mode + "\nAnalyze строит честное видение, маршрут и контуры.");
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -219,10 +209,11 @@ public final class MainActivity extends Activity {
         if (sourceImage == null) { status.setText("Сначала импортируй картинку."); return; }
         if (backgroundBusy) { status.setText("Занято. Дождись конца анализа или benchmark."); return; }
         backgroundBusy = true;
-        status.setText("Analyze...\nСтрою видение, контуры и маршрут.");
+        status.setText("Analyze...\nСчитаю Raw/Fix evidence, видение, контуры и маршрут.");
         new Thread(() -> {
             try {
                 ImageAnalysis analysis = ImageAnalyzer.analyze(sourceImage, "current_import");
+                EvidenceProfile evidence = EvidenceProfile.from(analysis);
                 AnalysisLayers layers = AnalysisLayers.build(sourceImage);
                 ComponentRoleMap roles = ComponentRoleMap.build(sourceImage, layers, analysis);
                 UiLayoutAnalysis ui = UiLayoutAnalysis.analyze(sourceImage);
@@ -234,12 +225,14 @@ public final class MainActivity extends Activity {
                 File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_analysis_current.json");
                 FileWriter writer = new FileWriter(out);
                 writer.write(analysis.toJson());
+                writer.write("\n\n\"evidence_profile\": ");
+                writer.write(evidence.toJson());
                 writer.close();
 
                 AnalysisVisualReport.Result report = AnalysisVisualReport.writeSingle(sourceImage, analysis);
-                String text = compactAnalysisSummary(analysis, intent, report.zipPath);
+                String text = compactAnalysisSummary(analysis, intent, evidence, report.zipPath);
                 RuntimeLog.line("analyze_visual", text);
-                runOnUiThread(() -> { previewView.setAnalysisOverlay(overlay); status.setText(text); });
+                runOnUiThread(() -> { previewView.setRouteKind(evidence.routeKind()); previewView.setAnalysisOverlay(overlay); status.setText(text); });
             } catch (Exception e) {
                 CrashLogger.logHandledError("analyze_visual", e);
                 runOnUiThread(() -> status.setText("Analyze не удался: " + e.getMessage()));
@@ -250,14 +243,14 @@ public final class MainActivity extends Activity {
     private void runAnalyzerBenchmark() {
         if (backgroundBusy) { status.setText("Занято. Дождись конца анализа или benchmark."); return; }
         backgroundBusy = true;
-        status.setText("Bench...\nИщу SolumDrawDataset_v1 и JSON-разметку.");
+        status.setText("Bench...\nСчитаю raw/fixed accuracy.");
         new Thread(() -> {
             try {
                 AnalyzerBenchmark.Result result = AnalyzerBenchmark.run(this, new AnalyzerBenchmark.Progress() {
                     @Override public void onStart(String datasetPath, int total, int labelsFound) { runOnUiThread(() -> status.setText("Bench\nКартинок: " + total + " | Меток: " + labelsFound + "\n" + datasetPath)); }
-                    @Override public void onItem(int index, int total, String name, int top1, int top3, int missingLabels) { if (index == 1 || index == total || index % 5 == 0) runOnUiThread(() -> status.setText("Bench " + index + "/" + total + "\nTop1: " + top1 + " | Top3: " + top3 + " | Без меток: " + missingLabels + "\n" + name)); }
+                    @Override public void onItem(int index, int total, String name, int top1, int top3, int missingLabels) { if (index == 1 || index == total || index % 5 == 0) runOnUiThread(() -> status.setText("Bench " + index + "/" + total + "\nFixed Top1: " + top1 + " | Fixed Top3: " + top3 + "\n" + name)); }
                 });
-                String text = "Bench готов\nКартинок: " + result.images + " | Top1: " + pct(result.top1, result.labelsFound) + " | Top3: " + pct(result.top3, result.labelsFound) + "\nZIP: " + result.zipPath;
+                String text = "Bench готов\nКартинок: " + result.images + " | Fixed Top1: " + pct(result.top1, result.labelsFound) + " | Fixed Top3: " + pct(result.top3, result.labelsFound) + "\nZIP: " + result.zipPath;
                 runOnUiThread(() -> status.setText(text));
             } catch (Exception e) {
                 CrashLogger.logHandledError("benchmark", e);
@@ -268,16 +261,16 @@ public final class MainActivity extends Activity {
 
     private void showImageInfo() {
         if (lastImageInfo == null) { status.setText("Нет картинки\nBench path: /storage/emulated/0/Download/" + AnalyzerBenchmark.DATASET_DIR); return; }
-        Rect rect = previewView.currentImageRect();
-        String planInfo = currentPlan == null ? "План: ещё нет" : "План: действий " + currentPlan.actions.size();
-        String analysisInfo = lastAnalysis == null ? "Анализ: ещё нет" : compactAnalysisSummary(lastAnalysis, lastIntent, "");
-        status.setText(lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + "\n" + analysisInfo + "\n" + planInfo);
+        String analysisInfo = lastAnalysis == null ? "Анализ: ещё нет" : compactAnalysisSummary(lastAnalysis, lastIntent, EvidenceProfile.from(lastAnalysis), "");
+        status.setText(lastImageInfo.summary() + "\n" + analysisInfo);
     }
 
     private void buildPlan(DrawMode mode) {
         if (sourceImage == null) { status.setText("Сначала импортируй картинку."); return; }
         if (lastAnalysis == null) { try { lastAnalysis = ImageAnalyzer.analyze(sourceImage, "current_import"); } catch (Exception ignored) {} }
         try {
+            EvidenceProfile evidence = EvidenceProfile.from(lastAnalysis);
+            previewView.setRouteKind(evidence.routeKind());
             Rect imageRect = previewView.currentImageRect();
             int width = Math.max(1, imageRect.width());
             int height = Math.max(1, imageRect.height());
@@ -288,8 +281,7 @@ public final class MainActivity extends Activity {
             long ms = System.currentTimeMillis() - start;
             previewView.setPlan(currentPlan);
             lastReconstructionSummary = residual.summary() + " | " + runVirtualCanvasMetrics(currentPlan);
-            String genre = lastAnalysis == null ? "no-analysis" : SceneArtHeuristic.correctedGenre(lastAnalysis);
-            status.setText("План " + mode.name() + "\nЖанр: " + ruGenre(genre) + " | действий: " + currentPlan.actions.size() + " | " + ms + "ms\n" + residual.summary());
+            status.setText("План " + mode.name() + "\nТип: " + evidence.routeKind() + " | действий: " + currentPlan.actions.size() + " | " + ms + "ms\n" + residual.summary());
         } catch (Exception e) { status.setText("План не построился: " + e.getMessage()); }
     }
 
@@ -323,13 +315,12 @@ public final class MainActivity extends Activity {
         } catch (Exception e) { status.setText("Export не удался: " + e.getMessage()); }
     }
 
-    private String compactAnalysisSummary(ImageAnalysis a, DrawingIntentAnalysis intent, String zip) {
-        String predicted = SceneArtHeuristic.correctedGenre(a);
+    private String compactAnalysisSummary(ImageAnalysis a, DrawingIntentAnalysis intent, EvidenceProfile ev, String zip) {
         StringBuilder b = new StringBuilder();
-        b.append("Класс: ").append(ruGenre(predicted)).append("  ").append(Math.round(a.confidence * 100f)).append("%\n");
-        b.append("План: ").append(routeShort(predicted, intent)).append("\n");
-        b.append("Сигналы: контур ").append(Math.round(a.edgeDensity * 100f)).append("% · текст ").append(Math.round(a.realTextRatio * 100f)).append("% · кожа ").append(Math.round(a.skinRatio * 100f)).append("%\n");
-        if (SceneArtHeuristic.note(a).length() > 0) b.append("Фикс: ").append(SceneArtHeuristic.note(a)).append('\n');
+        b.append("Raw→Fix: ").append(ev.rawGenre).append(" → ").append(ev.fixedGenre).append("\n");
+        b.append("Баллы: UI ").append(ev.ui).append(" · Anime ").append(ev.anime).append(" · Person ").append(ev.person).append(" · Scene ").append(ev.scene).append("\n");
+        b.append("План: ").append(routeShort(ev.fixedGenre, intent)).append("\n");
+        b.append("Почему: ").append(ev.reason).append("\n");
         if (zip != null && zip.length() > 0) b.append("ZIP: ").append(zip);
         return b.toString();
     }
@@ -337,10 +328,10 @@ public final class MainActivity extends Activity {
     private static String routeShort(String genre, DrawingIntentAnalysis intent) {
         if (genre.contains("anime") || genre.contains("portrait")) return "фон → силуэт → тело/одежда → лицо → детали";
         if (genre.contains("ui")) return "фон → панели → карточки → иконки → текст";
+        if (genre.contains("logo")) return "фон → знак → вырезы → glow → края";
         if (genre.contains("landscape") || genre.contains("painting") || genre.contains("concept")) return "фон → массы → свет/тень → объект → детали";
         return "фон → формы → контур → тени → детали";
     }
 
-    private static String ruGenre(String g) { if (g == null) return "неизвестно"; if (g.contains("landscape")) return "пейзаж / окружение"; if (g.contains("painting") || g.contains("concept")) return "цифровой арт / концепт"; if (g.contains("ui")) return "интерфейс / UI"; if (g.contains("anime")) return "аниме / персонаж"; if (g.contains("portrait")) return "портрет / персонаж"; if (g.contains("logo")) return "логотип / символ"; if (g.contains("sketch")) return "скетч / линии"; if (g.contains("vector")) return "плоский вектор"; if (g.contains("photo")) return "фото"; return g; }
     private static String pct(int value, int total) { return total <= 0 ? "n/a" : Math.round(100f * value / total) + "%"; }
 }
