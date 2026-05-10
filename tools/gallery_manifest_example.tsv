@@ -1,0 +1,8 @@
+# genre	image_url	prompt	source_url	model
+# Fill with image+prompt pairs from MeiGen or any gallery page.
+# Keep labels honest: if genre is unknown, write unknown and let the script infer from prompt.
+# Example format only; replace URLs with real direct image URLs.
+
+anime_character	https://picsum.photos/id/64/512/512	anime girl portrait, cinematic lighting, detailed eyes	example	unknown
+nature_scene	https://picsum.photos/id/10/512/512	cinematic forest landscape, atmospheric light, nature scene	example	unknown
+ui_design	https://picsum.photos/id/0/512/512	mobile app ui dashboard interface, cards and buttons	example	unknown
