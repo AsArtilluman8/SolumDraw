@@ -89,13 +89,14 @@ public final class ImageAnalyzer {
                 logoScore, paletteCompactness, whitePaperRatio, layers.componentCount, layers.textComponentCount,
                 layers.textLineCount, layers.largeComponentCount, ui);
 
-        return new ImageAnalysis(name, source.getWidth(), source.getHeight(), w, h, genre, confidence,
+        ImageAnalysis raw = new ImageAnalysis(name, source.getWidth(), source.getHeight(), w, h, genre, confidence,
                 edgeDensity, detailDensity, skinRatio, oldTextRatio, avgSat, avgBright,
                 paletteCompactness, darkRatio, brightRatio, realTextRatio, glyphRatio, logoScore,
                 layers.saliencyDensity, layers.centralObjectRatio, layers.symmetryVertical,
                 layers.componentCount, layers.textComponentCount, layers.textLineCount,
                 layers.largeComponentCount, layers.largestComponentRatio,
                 palette, strategy, warnings);
+        return AnalyzerPostProcessor.apply(raw);
     }
 
     private static Bitmap scale(Bitmap source, int maxSide) {
