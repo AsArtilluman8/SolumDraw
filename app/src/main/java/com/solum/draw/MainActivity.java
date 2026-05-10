@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -18,6 +19,8 @@ import com.solum.draw.analyze.AnalysisVisualReport;
 import com.solum.draw.analyze.AnalyzerBenchmark;
 import com.solum.draw.analyze.ImageAnalysis;
 import com.solum.draw.analyze.ImageAnalyzer;
+import com.solum.draw.analyze.ImageFeatures;
+import com.solum.draw.analyze.MultiEvidenceAnalyzer;
 import com.solum.draw.debug.CrashLogger;
 import com.solum.draw.debug.RuntimeLog;
 import com.solum.draw.image.SafeBitmapLoader;
@@ -38,59 +41,59 @@ import java.io.FileWriter;
 public final class MainActivity extends Activity {
     private static final int REQUEST_IMAGE = 1001;
     private static final int REQUEST_BENCH_PERMISSION = 2002;
+    private static final int BG = 0xFF060B12;
+    private static final int CYAN = 0xFF22E6F2;
+    private static final int VIOLET = 0xFF9B6BFF;
+    private static final int TEXT = 0xFFE9F7FF;
 
     private TextView status;
     private StrokePreviewView previewView;
     private Bitmap sourceImage;
     private SafeBitmapLoader.Result lastImageInfo;
     private ImageAnalysis lastAnalysis;
+    private MultiEvidenceAnalyzer.Decision lastDecision;
     private StrokePlan currentPlan;
-    private String lastReconstructionSummary = "no reconstruction metrics";
+    private String lastReconstructionSummary = "метрик пока нет";
     private volatile boolean backgroundBusy = false;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 04G started");
+        RuntimeLog.line("boot", "SolumDraw Patch 20B UI started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF101218);
+        root.setBackgroundColor(BG);
+
+        TextView title = new TextView(this);
+        title.setText("S O L U M   D R A W  ·  E V I D E N C E");
+        title.setTextColor(CYAN);
+        title.setTextSize(14f);
+        title.setPadding(14, 12, 14, 4);
 
         status = new TextView(this);
-        status.setTextColor(0xFFFFFFFF);
-        status.setTextSize(13f);
-        status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw 04G: Visual Analyzer. Import image, Analyze, Bench.");
+        status.setTextColor(TEXT);
+        status.setTextSize(12.5f);
+        status.setPadding(14, 10, 14, 10);
+        status.setBackground(cardBg(0xAA0D1824, CYAN, 1));
+        status.setText("Готово. Импорт → Анализ → Вид: маршрут/контуры/холст. Benchmark показывает прогресс.");
 
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setPadding(8, 8, 8, 4);
-
-        LinearLayout drawBar = new LinearLayout(this);
-        drawBar.setOrientation(LinearLayout.HORIZONTAL);
-        drawBar.setPadding(8, 4, 8, 4);
-
-        Button importButton = button("Import");
-        Button analyzeButton = button("Analyze+");
-        Button infoButton = button("Info");
-        Button canvasButton = button("Canvas");
-        Button benchButton = button("Bench");
-        Button fastButton = button("Fast");
-        Button naturalButton = button("Natural");
-        Button exportButton = button("Export");
-
-        topBar.addView(importButton);
-        topBar.addView(analyzeButton);
-        topBar.addView(infoButton);
-        topBar.addView(canvasButton);
-        topBar.addView(benchButton);
-        drawBar.addView(fastButton);
-        drawBar.addView(naturalButton);
-        drawBar.addView(exportButton);
+        LinearLayout topBar = row();
+        LinearLayout drawBar = row();
+        Button importButton = button("Импорт", CYAN);
+        Button analyzeButton = button("Анализ", CYAN);
+        Button infoButton = button("Инфо", VIOLET);
+        Button viewButton = button("Вид", CYAN);
+        Button benchButton = button("Bench", VIOLET);
+        Button fastButton = button("Быстро", CYAN);
+        Button naturalButton = button("Натур.", CYAN);
+        Button exportButton = button("Экспорт", VIOLET);
+        topBar.addView(importButton); topBar.addView(analyzeButton); topBar.addView(infoButton); topBar.addView(viewButton); topBar.addView(benchButton);
+        drawBar.addView(fastButton); drawBar.addView(naturalButton); drawBar.addView(exportButton);
 
         previewView = new StrokePreviewView(this);
-        root.addView(status);
+        root.addView(title);
+        root.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(topBar);
         root.addView(drawBar);
         root.addView(previewView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -99,25 +102,41 @@ public final class MainActivity extends Activity {
         importButton.setOnClickListener(v -> pickImage());
         analyzeButton.setOnClickListener(v -> analyzeCurrentImageVisual());
         infoButton.setOnClickListener(v -> showImageInfo());
-        canvasButton.setOnClickListener(v -> togglePreviewMode());
+        viewButton.setOnClickListener(v -> togglePreviewMode());
         benchButton.setOnClickListener(v -> runAnalyzerBenchmarkWithPermission());
         fastButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_FAST));
         naturalButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_NATURAL));
         exportButton.setOnClickListener(v -> exportPlan());
     }
 
-    private Button button(String text) {
+    private LinearLayout row() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(8, 4, 8, 4);
+        return row;
+    }
+
+    private Button button(String text, int accent) {
         Button button = new Button(this);
         button.setText(text);
+        button.setTextColor(TEXT);
         button.setTextSize(10f);
         button.setAllCaps(false);
         button.setPadding(2, 2, 2, 2);
+        button.setBackground(cardBg(0xBB0B1420, accent, 1));
         button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         return button;
     }
 
+    private GradientDrawable cardBg(int fill, int stroke, int strokeWidth) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(fill);
+        d.setCornerRadius(16f);
+        d.setStroke(strokeWidth, stroke);
+        return d;
+    }
+
     private void pickImage() {
-        RuntimeLog.line("ui", "pick image requested");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("image/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -126,8 +145,7 @@ public final class MainActivity extends Activity {
 
     private void togglePreviewMode() {
         String mode = previewView.togglePreviewMode();
-        status.setText("Preview mode: " + mode);
-        RuntimeLog.line("preview_mode", mode);
+        status.setText("Вид: " + mode + "\nРежимы: исходник → маршрут → контуры → холст.");
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -135,23 +153,18 @@ public final class MainActivity extends Activity {
         if (requestCode == REQUEST_IMAGE && resultCode == RESULT_OK && data != null) {
             try {
                 Uri uri = data.getData();
-                if (uri == null) {
-                    status.setText("Import failed: empty image uri");
-                    RuntimeLog.line("image_import", "empty uri");
-                    return;
-                }
+                if (uri == null) { status.setText("Импорт не удался: пустой путь."); return; }
                 lastImageInfo = SafeBitmapLoader.load(getContentResolver(), uri);
                 sourceImage = lastImageInfo.bitmap;
                 previewView.setSourceImage(sourceImage);
                 currentPlan = null;
                 lastAnalysis = null;
-                lastReconstructionSummary = "no reconstruction metrics";
+                lastDecision = null;
                 previewView.setPlan(null);
-                status.setText("Image: " + lastImageInfo.summary() + " | tap Analyze+, Fast, or Natural");
+                status.setText("Картинка загружена\n" + lastImageInfo.summary() + "\nНажми Анализ.");
             } catch (Exception e) {
                 CrashLogger.logHandledError("image_import", e);
-                RuntimeLog.error("image_import", e);
-                status.setText("Import failed: " + e.getMessage());
+                status.setText("Импорт не удался: " + e.getMessage());
             }
         }
     }
@@ -160,9 +173,8 @@ public final class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_BENCH_PERMISSION) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            RuntimeLog.line("benchmark_permission", granted ? "granted" : "denied");
             if (granted) runAnalyzerBenchmark();
-            else status.setText("Image permission denied. Enable Photos/Images permission for SolumDraw, then tap Bench again.");
+            else status.setText("Нет разрешения на чтение картинок.");
         }
     }
 
@@ -181,8 +193,7 @@ public final class MainActivity extends Activity {
     private void runAnalyzerBenchmarkWithPermission() {
         if (!hasBenchImagePermission()) {
             String permission = benchPermissionName();
-            status.setText("Need image permission for Benchmark. Confirm permission, then Bench will run.");
-            RuntimeLog.line("benchmark_permission", "request " + permission);
+            status.setText("Bench нужен доступ к изображениям. Подтверди разрешение.");
             requestPermissions(new String[] { permission }, REQUEST_BENCH_PERMISSION);
             return;
         }
@@ -190,89 +201,71 @@ public final class MainActivity extends Activity {
     }
 
     private void analyzeCurrentImageVisual() {
-        if (sourceImage == null) {
-            status.setText("Import image first.");
-            return;
-        }
-        if (backgroundBusy) {
-            status.setText("Busy. Wait for current analysis/benchmark to finish.");
-            return;
-        }
+        if (sourceImage == null) { status.setText("Сначала импортируй картинку."); return; }
+        if (backgroundBusy) { status.setText("Занято. Дождись конца текущей задачи."); return; }
         backgroundBusy = true;
-        status.setText("Analyze+ running... visual report will be saved to Download");
-        RuntimeLog.line("analyze_visual", "start");
+        status.setText("Анализ...\nСчитаю независимые evidence-баллы и строю маршрут.");
         new Thread(() -> {
             try {
+                ImageFeatures features = ImageFeatures.build(sourceImage, "current_import");
+                MultiEvidenceAnalyzer.Decision decision = MultiEvidenceAnalyzer.analyze(features);
                 ImageAnalysis analysis = ImageAnalyzer.analyze(sourceImage, "current_import");
+                lastDecision = decision;
                 lastAnalysis = analysis;
+                previewView.setRouteKind(routeKind(decision.top1));
                 File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_analysis_current.json");
                 FileWriter writer = new FileWriter(out);
                 writer.write(analysis.toJson());
+                writer.write("\n\n{\"top3\":\"" + decision.top3Pipe() + "\",\"evidence\":\"" + safe(decision.warnings) + "\"}\n");
                 writer.close();
                 AnalysisVisualReport.Result report = AnalysisVisualReport.writeSingle(sourceImage, analysis);
-                String text = "Analyze+ done: " + analysis.shortSummary() + " | zip=" + report.zipPath;
-                RuntimeLog.line("analyze_visual", text);
-                runOnUiThread(() -> status.setText(text));
+                String text = analysisText(decision, report.zipPath);
+                runOnUiThread(() -> { previewView.showRoute(); status.setText(text); });
             } catch (Exception e) {
                 CrashLogger.logHandledError("analyze_visual", e);
-                RuntimeLog.error("analyze_visual", e);
-                runOnUiThread(() -> status.setText("Analyze+ failed: " + e.getMessage()));
-            } finally {
-                backgroundBusy = false;
-            }
+                runOnUiThread(() -> status.setText("Анализ не удался: " + e.getMessage()));
+            } finally { backgroundBusy = false; }
         }).start();
     }
 
     private void runAnalyzerBenchmark() {
-        if (backgroundBusy) {
-            status.setText("Busy. Wait for current analysis/benchmark to finish.");
-            return;
-        }
+        if (backgroundBusy) { status.setText("Занято. Дождись конца текущей задачи."); return; }
         backgroundBusy = true;
-        status.setText("Benchmark running in background... app should stay responsive");
-        RuntimeLog.line("benchmark", "start async");
+        status.setText("Bench стартовал...\n0/?");
         new Thread(() -> {
             try {
-                AnalyzerBenchmark.Result result = AnalyzerBenchmark.run(this);
-                String text = "Benchmark done: images=" + result.images + " errors=" + result.errors + " zip=" + result.zipPath;
-                RuntimeLog.line("benchmark", text);
+                AnalyzerBenchmark.Result result = AnalyzerBenchmark.run(this, new AnalyzerBenchmark.Progress() {
+                    @Override public void onStart(String datasetPath, int total, int labelsFound) {
+                        runOnUiThread(() -> status.setText("Bench старт\nКартинок: " + total + " | меток: " + labelsFound + "\n" + datasetPath));
+                    }
+                    @Override public void onItem(int index, int total, String name, int top1, int top3, int missingLabels) {
+                        if (index == 1 || index == total || index % 3 == 0) {
+                            int pct = Math.round(index * 100f / Math.max(1, total));
+                            runOnUiThread(() -> status.setText("Bench " + index + "/" + total + "  " + pct + "%\nTop1: " + top1 + " | Top3: " + top3 + " | без меток: " + missingLabels + "\n" + name));
+                        }
+                    }
+                });
+                String text = "Bench готов\nКартинок: " + result.images + " | Top1: " + pct(result.top1, result.labelsFound) + " | Top3: " + pct(result.top3, result.labelsFound) + "\nZIP: " + result.zipPath;
                 runOnUiThread(() -> status.setText(text));
             } catch (Exception e) {
                 CrashLogger.logHandledError("benchmark", e);
-                RuntimeLog.error("benchmark", e);
-                runOnUiThread(() -> status.setText("Benchmark failed: " + e.getMessage()));
-            } finally {
-                backgroundBusy = false;
-            }
+                runOnUiThread(() -> status.setText("Bench не удался: " + e.getMessage()));
+            } finally { backgroundBusy = false; }
         }).start();
     }
 
     private void showImageInfo() {
-        if (lastImageInfo == null) {
-            status.setText("No image loaded. Test folder: /storage/emulated/0/Download/" + AnalyzerBenchmark.INPUT_DIR);
-            RuntimeLog.line("image_info", "no image loaded");
-            return;
-        }
-        String planInfo = currentPlan == null ? "no plan" : "plan actions=" + currentPlan.actions.size();
-        String analysisInfo = lastAnalysis == null ? "no analysis" : lastAnalysis.shortSummary();
+        if (lastImageInfo == null) { status.setText("Нет картинки. Датасет: Download/" + AnalyzerBenchmark.DATASET_DIR); return; }
         Rect rect = previewView.currentImageRect();
-        String text = lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + " | mode=" + previewView.previewModeName() + " | " + analysisInfo + " | " + planInfo + " | " + lastReconstructionSummary;
-        status.setText(text);
-        RuntimeLog.line("image_info", text);
+        String analysisInfo = lastDecision == null ? "Анализ: ещё нет" : analysisText(lastDecision, "");
+        status.setText(lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + "\n" + analysisInfo);
     }
 
     private void buildPlan(DrawMode mode) {
-        if (sourceImage == null) {
-            status.setText("Import image first.");
-            RuntimeLog.line("build_plan", "blocked: no image");
-            return;
-        }
-        if (lastAnalysis == null) {
-            try { lastAnalysis = ImageAnalyzer.analyze(sourceImage, "current_import"); } catch (Exception ignored) {}
-        }
+        if (sourceImage == null) { status.setText("Сначала импортируй картинку."); return; }
+        if (lastAnalysis == null) { try { lastAnalysis = ImageAnalyzer.analyze(sourceImage, "current_import"); } catch (Exception ignored) {} }
         try {
             Rect imageRect = previewView.currentImageRect();
-            RuntimeLog.line("build_plan", "start mode=" + mode.name() + " bitmap=" + sourceImage.getWidth() + "x" + sourceImage.getHeight() + " preview=" + imageRect.width() + "x" + imageRect.height());
             int width = Math.max(1, imageRect.width());
             int height = Math.max(1, imageRect.height());
             long start = System.currentTimeMillis();
@@ -282,15 +275,8 @@ public final class MainActivity extends Activity {
             long ms = System.currentTimeMillis() - start;
             previewView.setPlan(currentPlan);
             lastReconstructionSummary = residual.summary() + " | " + runVirtualCanvasMetrics(currentPlan);
-            String genre = lastAnalysis == null ? "no-analysis" : lastAnalysis.genre;
-            String summary = "Plan " + mode.name() + " | genre=" + genre + " | actions=" + currentPlan.actions.size() + " | ms=" + ms + " | S=" + currentPlan.countStagePrefix("SCULPTOR") + " P=" + currentPlan.countStagePrefix("POTTER") + " G=" + currentPlan.countStagePrefix("GRINDER") + " Po=" + currentPlan.countStagePrefix("POLISHER") + " | " + residual.summary();
-            status.setText(summary);
-            RuntimeLog.line("build_plan", summary + " | " + lastReconstructionSummary);
-        } catch (Exception e) {
-            CrashLogger.logHandledError("build_plan_" + mode.name(), e);
-            RuntimeLog.error("build_plan_" + mode.name(), e);
-            status.setText("Plan failed: " + e.getMessage());
-        }
+            status.setText("План " + mode.name() + "\nДействий: " + currentPlan.actions.size() + " | " + ms + "ms\n" + residual.summary());
+        } catch (Exception e) { status.setText("План не построился: " + e.getMessage()); }
     }
 
     private String runVirtualCanvasMetrics(StrokePlan plan) {
@@ -302,14 +288,8 @@ public final class MainActivity extends Activity {
             for (StrokeAction action : plan.actions) virtualCanvas.apply(scaleStroke(action, sx, sy));
             ReconstructionMetrics metrics = ReconstructionMetrics.compare(target, virtualCanvas);
             ErrorMap errorMap = ErrorMap.build(target, virtualCanvas, 16);
-            String summary = virtualCanvas.summary() + " | " + metrics.summary() + " | " + errorMap.summary(3);
-            RuntimeLog.line("reconstruct_metrics", summary);
-            return summary;
-        } catch (Exception e) {
-            CrashLogger.logHandledError("reconstruct_metrics", e);
-            RuntimeLog.error("reconstruct_metrics", e);
-            return "reconstruction metrics failed: " + e.getMessage();
-        }
+            return virtualCanvas.summary() + " | " + metrics.summary() + " | " + errorMap.summary(3);
+        } catch (Exception e) { return "метрики упали: " + e.getMessage(); }
     }
 
     private StrokeAction scaleStroke(StrokeAction action, float sx, float sy) {
@@ -319,22 +299,54 @@ public final class MainActivity extends Activity {
     }
 
     private void exportPlan() {
-        if (currentPlan == null) {
-            status.setText("Build plan first.");
-            RuntimeLog.line("export_plan", "blocked: no plan");
-            return;
-        }
+        if (currentPlan == null) { status.setText("Сначала построй план."); return; }
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch04g.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch20.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
-            status.setText("Exported: " + out.getAbsolutePath());
-            RuntimeLog.line("export_plan", "exported " + out.getAbsolutePath());
-        } catch (Exception e) {
-            CrashLogger.logHandledError("export_plan", e);
-            RuntimeLog.error("export_plan", e);
-            status.setText("Export failed: " + e.getMessage());
-        }
+            status.setText("План сохранён\n" + out.getAbsolutePath());
+        } catch (Exception e) { status.setText("Экспорт не удался: " + e.getMessage()); }
     }
+
+    private String analysisText(MultiEvidenceAnalyzer.Decision d, String zip) {
+        StringBuilder b = new StringBuilder();
+        b.append("Top1: ").append(ru(d.top1)).append("  ").append(Math.round(d.confidence * 100f)).append("%\n");
+        b.append("Top3: ").append(ru(d.top1)).append(" / ").append(ru(d.top2)).append(" / ").append(ru(d.top3)).append("\n");
+        b.append("План: ").append(ruPlan(d.strategy)).append("\n");
+        b.append("Причины: ").append(shorten(d.warnings, 190));
+        if (zip != null && zip.length() > 0) b.append("\nZIP: ").append(zip);
+        return b.toString();
+    }
+
+    private String routeKind(String genre) {
+        if (genre.contains("anime") || genre.contains("portrait") || genre.contains("body")) return "person";
+        if (genre.contains("ui")) return "ui";
+        if (genre.contains("logo")) return "logo";
+        if (genre.contains("landscape") || genre.contains("architecture") || genre.contains("painting")) return "scene";
+        return "general";
+    }
+
+    private static String ru(String g) {
+        if (g == null) return "?";
+        if (g.contains("game_engine")) return "game UI";
+        if (g.contains("ui")) return "UI";
+        if (g.contains("anime")) return "аниме";
+        if (g.contains("portrait")) return "портрет";
+        if (g.contains("body")) return "тело";
+        if (g.contains("landscape")) return "пейзаж";
+        if (g.contains("architecture")) return "архитектура";
+        if (g.contains("logo")) return "логотип";
+        if (g.contains("vector")) return "вектор";
+        if (g.contains("painting")) return "арт";
+        if (g.contains("photo")) return "фото";
+        if (g.contains("texture")) return "текстура";
+        if (g.contains("pattern")) return "паттерн";
+        return g;
+    }
+
+    private static String ruPlan(String s) { return s == null ? "фон → формы → объект → детали" : s.replace(" -> ", " → "); }
+    private static String pct(int value, int total) { return total <= 0 ? "n/a" : Math.round(100f * value / total) + "%"; }
+    private static String shorten(String s, int max) { return s == null ? "" : (s.length() <= max ? s : s.substring(0, max) + "..."); }
+    private static String safe(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "'").replace("\n", " "); }
 }
