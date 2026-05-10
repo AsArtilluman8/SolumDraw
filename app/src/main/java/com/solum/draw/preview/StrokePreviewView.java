@@ -13,10 +13,15 @@ import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
 
 public final class StrokePreviewView extends View {
+    private static final int MODE_SOURCE = 0;
+    private static final int MODE_ANALYSIS = 1;
+    private static final int MODE_WHITE = 2;
+
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Bitmap sourceImage;
+    private Bitmap analysisOverlay;
     private StrokePlan plan;
-    private boolean showSourceOverlay = true;
+    private int previewMode = MODE_SOURCE;
 
     public StrokePreviewView(Context context) {
         super(context);
@@ -27,6 +32,14 @@ public final class StrokePreviewView extends View {
 
     public void setSourceImage(Bitmap sourceImage) {
         this.sourceImage = sourceImage;
+        this.analysisOverlay = null;
+        this.previewMode = MODE_SOURCE;
+        invalidate();
+    }
+
+    public void setAnalysisOverlay(Bitmap overlay) {
+        this.analysisOverlay = overlay;
+        if (overlay != null) this.previewMode = MODE_ANALYSIS;
         invalidate();
     }
 
@@ -36,20 +49,27 @@ public final class StrokePreviewView extends View {
     }
 
     public String togglePreviewMode() {
-        showSourceOverlay = !showSourceOverlay;
+        if (analysisOverlay != null) {
+            previewMode = (previewMode + 1) % 3;
+        } else {
+            previewMode = previewMode == MODE_WHITE ? MODE_SOURCE : MODE_WHITE;
+        }
         invalidate();
-        return showSourceOverlay ? "Source overlay" : "White canvas";
+        return previewModeName();
     }
 
     public String previewModeName() {
-        return showSourceOverlay ? "Source overlay" : "White canvas";
+        if (previewMode == MODE_ANALYSIS && analysisOverlay != null) return "Анализ / overlay";
+        if (previewMode == MODE_WHITE) return "Белый холст";
+        return "Исходник";
     }
 
     public Rect currentImageRect() {
-        if (sourceImage == null) {
+        Bitmap image = displayImage();
+        if (image == null) {
             return new Rect(0, 0, Math.max(1, getWidth()), Math.max(1, getHeight()));
         }
-        return fitRect(sourceImage.getWidth(), sourceImage.getHeight(), Math.max(1, getWidth()), Math.max(1, getHeight()));
+        return fitRect(image.getWidth(), image.getHeight(), Math.max(1, getWidth()), Math.max(1, getHeight()));
     }
 
     @Override protected void onDraw(Canvas canvas) {
@@ -67,20 +87,21 @@ public final class StrokePreviewView extends View {
         }
 
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(showSourceOverlay ? Color.WHITE : Color.rgb(20, 24, 32));
-        paint.setTextSize(26f);
-        canvas.drawText("SolumDraw preview - " + previewModeName(), 24f, 40f, paint);
+        paint.setColor(previewMode == MODE_WHITE ? Color.rgb(20, 24, 32) : Color.WHITE);
+        paint.setTextSize(24f);
+        canvas.drawText("SolumDraw — " + previewModeName(), 24f, 40f, paint);
+    }
+
+    private Bitmap displayImage() {
+        if (previewMode == MODE_ANALYSIS && analysisOverlay != null) return analysisOverlay;
+        return sourceImage;
     }
 
     private void drawPreviewSurface(Canvas canvas, Rect dst) {
         paint.setStyle(Paint.Style.FILL);
-        if (showSourceOverlay && sourceImage != null) {
-            paint.setColor(Color.rgb(16, 18, 24));
-            canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
-            paint.setAlpha(64);
-            canvas.drawBitmap(sourceImage, null, dst, paint);
-            paint.setAlpha(255);
-        } else {
+        canvas.drawColor(Color.rgb(16, 18, 24));
+
+        if (previewMode == MODE_WHITE || displayImage() == null) {
             paint.setColor(Color.rgb(238, 238, 232));
             canvas.drawRect(dst, paint);
             paint.setColor(Color.rgb(42, 44, 50));
@@ -88,15 +109,26 @@ public final class StrokePreviewView extends View {
             paint.setStrokeWidth(2f);
             canvas.drawRect(dst, paint);
             paint.setStyle(Paint.Style.FILL);
+            return;
+        }
+
+        if (previewMode == MODE_ANALYSIS && analysisOverlay != null) {
+            paint.setAlpha(255);
+            canvas.drawBitmap(analysisOverlay, null, dst, paint);
+            return;
+        }
+
+        if (sourceImage != null) {
+            paint.setAlpha(96);
+            canvas.drawBitmap(sourceImage, null, dst, paint);
+            paint.setAlpha(255);
         }
     }
 
     private void drawPlan(Canvas canvas, StrokePlan plan) {
         for (StrokeAction action : plan.actions) {
-            if (showSourceOverlay && isSuppressedPreviewStroke(action)) {
-                continue;
-            }
-            int color = showSourceOverlay ? action.color : contrastForWhiteCanvas(action.color);
+            if (previewMode == MODE_SOURCE && isSuppressedPreviewStroke(action)) continue;
+            int color = previewMode == MODE_WHITE ? contrastForWhiteCanvas(action.color) : action.color;
             paint.setColor(color);
             paint.setStrokeWidth(action.size);
             paint.setStyle(Paint.Style.STROKE);
@@ -119,20 +151,14 @@ public final class StrokePreviewView extends View {
     }
 
     private static int contrastForWhiteCanvas(int color) {
-        int r = Color.red(color);
-        int g = Color.green(color);
-        int b = Color.blue(color);
+        int r = Color.red(color), g = Color.green(color), b = Color.blue(color);
         int luma = (r * 30 + g * 59 + b * 11) / 100;
-        if (luma > 210) {
-            return Color.rgb(80, 80, 80);
-        }
+        if (luma > 210) return Color.rgb(80, 80, 80);
         return color;
     }
 
     private static boolean isSuppressedPreviewStroke(StrokeAction action) {
-        int r = Color.red(action.color);
-        int g = Color.green(action.color);
-        int b = Color.blue(action.color);
+        int r = Color.red(action.color), g = Color.green(action.color), b = Color.blue(action.color);
         int luma = (r * 30 + g * 59 + b * 11) / 100;
         return luma < 16 && action.stage.startsWith("SCULPTOR");
     }
