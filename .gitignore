@@ -1,0 +1,29 @@
+# Android/Gradle local outputs
+.gradle/
+build/
+app/build/
+local.properties
+
+# Java/Kotlin caches
+*.class
+
+# SolumDraw local datasets and reports
+datasets/
+benchmark_runs/
+SolumDrawDataset_*/
+SolumDrawAnalyzerReport_*/
+SolumDrawSingleAnalysis_*/
+
+# Generated local patch files
+patch_*.py
+patch_solumdraw_*.py
+
+# Python caches/tools runtime
+__pycache__/
+*.pyc
+
+# Archives and debug dumps
+*.zip
+*.apk
+*.log
+*.tmp
