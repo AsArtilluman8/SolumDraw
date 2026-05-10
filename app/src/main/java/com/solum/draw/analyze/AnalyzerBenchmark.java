@@ -59,14 +59,16 @@ public final class AnalyzerBenchmark {
                 Bitmap bitmap = BitmapFactory.decodeStream(new FileInputStream(img.file));
                 if (bitmap == null) throw new IllegalArgumentException("decode returned null");
                 ImageAnalysis analysis = ImageAnalyzer.analyze(bitmap, img.relativeName);
-                List<String> candidates = top3Candidates(analysis);
+                String predicted = SceneArtHeuristic.correctedGenre(analysis);
+                String note = SceneArtHeuristic.note(analysis);
+                List<String> candidates = top3Candidates(analysis, predicted);
                 boolean hasExpected = img.expected.length() > 0;
-                boolean ok1 = hasExpected && img.expected.equals(analysis.genre);
+                boolean ok1 = hasExpected && img.expected.equals(predicted);
                 boolean ok3 = hasExpected && contains(candidates, img.expected);
                 if (!hasExpected) missingLabels++;
                 if (ok1) top1++;
                 if (ok3) top3++;
-                items.add(new ItemResult(img.relativeName, img.expected, img.secondary, analysis, candidates, ok1, ok3, hasExpected));
+                items.add(new ItemResult(img.relativeName, img.expected, img.secondary, analysis, predicted, note, candidates, ok1, ok3, hasExpected));
             } catch (Exception e) {
                 errors.add(img.relativeName + ": " + e.getMessage());
             }
@@ -103,17 +105,18 @@ public final class AnalyzerBenchmark {
         }
     }
 
-    private static List<String> top3Candidates(ImageAnalysis a) {
+    private static List<String> top3Candidates(ImageAnalysis a, String predicted) {
         ArrayList<String> c = new ArrayList<>();
-        add(c, a.genre);
-        String g = a.genre;
-        if (g.contains("ui")) { add(c, "ui_screenshot"); add(c, "game_ui_hud"); add(c, "diagram_chart"); }
+        add(c, predicted);
+        String g = predicted;
+        if (SceneArtHeuristic.likelyFalseUi(a)) { add(c, "landscape_environment"); add(c, "digital_painting_concept"); add(c, "photo_general"); }
+        else if (g.contains("ui")) { add(c, "ui_screenshot"); add(c, "game_ui_hud"); add(c, "diagram_chart"); }
         else if (g.contains("anime")) { add(c, "anime_manga"); add(c, "cartoon_comic"); add(c, "lineart_sketch"); }
         else if (g.contains("portrait") || a.skinRatio > 0.08f) { add(c, "portrait_character"); add(c, "human_body_fullbody"); add(c, "photo_general"); }
         else if (g.contains("logo")) { add(c, "logo_icon"); add(c, "vector_flat"); add(c, "transparent_layered"); }
         else if (g.contains("sketch")) { add(c, "lineart_sketch"); add(c, "pencil_drawing"); add(c, "ink_wash"); }
         else if (g.contains("vector")) { add(c, "vector_flat"); add(c, "isometric_art"); add(c, "cartoon_comic"); }
-        else if (g.contains("cinematic") || g.contains("wallpaper") || g.contains("photo")) { add(c, "digital_painting_concept"); add(c, "landscape_environment"); add(c, "photo_general"); }
+        else if (g.contains("landscape") || g.contains("painting") || g.contains("photo")) { add(c, "digital_painting_concept"); add(c, "landscape_environment"); add(c, "photo_general"); }
         else { add(c, "photo_general"); add(c, "digital_painting_concept"); add(c, "texture_pattern"); }
         while (c.size() > 3) c.remove(c.size() - 1);
         return c;
@@ -125,10 +128,10 @@ public final class AnalyzerBenchmark {
     private static Stats buildStats(List<ItemResult> items) {
         Stats s = new Stats();
         for (ItemResult it : items) {
-            inc(s.predicted, it.analysis.genre);
+            inc(s.predicted, it.predicted);
             if (it.hasExpected) {
                 inc(s.expected, it.expected);
-                inc(s.confusion, it.expected + " -> " + it.analysis.genre);
+                inc(s.confusion, it.expected + " -> " + it.predicted);
                 if (!it.ok1) s.wrong++;
             } else s.missing++;
         }
@@ -136,20 +139,20 @@ public final class AnalyzerBenchmark {
     }
 
     private static String resultsCsv(List<ItemResult> items) {
-        StringBuilder b = new StringBuilder("file,true_class,secondary_classes,predicted,top3,top1_ok,top3_ok,confidence\n");
-        for (ItemResult it : items) b.append(csv(it.name)).append(',').append(csv(it.expected)).append(',').append(csv(it.secondary)).append(',').append(csv(it.analysis.genre)).append(',').append(csv(join(it.top3))).append(',').append(it.ok1).append(',').append(it.ok3).append(',').append(num(it.analysis.confidence)).append('\n');
+        StringBuilder b = new StringBuilder("file,true_class,secondary_classes,raw_predicted,predicted,top3,top1_ok,top3_ok,confidence,note\n");
+        for (ItemResult it : items) b.append(csv(it.name)).append(',').append(csv(it.expected)).append(',').append(csv(it.secondary)).append(',').append(csv(it.analysis.genre)).append(',').append(csv(it.predicted)).append(',').append(csv(join(it.top3))).append(',').append(it.ok1).append(',').append(it.ok3).append(',').append(num(it.analysis.confidence)).append(',').append(csv(it.note)).append('\n');
         return b.toString();
     }
 
     private static String mistakesCsv(List<ItemResult> items) {
-        StringBuilder b = new StringBuilder("file,true_class,predicted,top3,confidence,warnings\n");
-        for (ItemResult it : items) if (it.hasExpected && !it.ok1) b.append(csv(it.name)).append(',').append(csv(it.expected)).append(',').append(csv(it.analysis.genre)).append(',').append(csv(join(it.top3))).append(',').append(num(it.analysis.confidence)).append(',').append(csv(it.analysis.warnings)).append('\n');
+        StringBuilder b = new StringBuilder("file,true_class,raw_predicted,predicted,top3,confidence,note,warnings\n");
+        for (ItemResult it : items) if (it.hasExpected && !it.ok1) b.append(csv(it.name)).append(',').append(csv(it.expected)).append(',').append(csv(it.analysis.genre)).append(',').append(csv(it.predicted)).append(',').append(csv(join(it.top3))).append(',').append(num(it.analysis.confidence)).append(',').append(csv(it.note)).append(',').append(csv(it.analysis.warnings)).append('\n');
         return b.toString();
     }
 
     private static String predictionsJsonl(List<ItemResult> items) {
         StringBuilder b = new StringBuilder();
-        for (ItemResult it : items) b.append("{\"file\":\"").append(esc(it.name)).append("\",\"true_class\":\"").append(esc(it.expected)).append("\",\"predicted\":\"").append(esc(it.analysis.genre)).append("\",\"top3\":\"").append(esc(join(it.top3))).append("\",\"top1_ok\":").append(it.ok1).append(",\"top3_ok\":").append(it.ok3).append("}\n");
+        for (ItemResult it : items) b.append("{\"file\":\"").append(esc(it.name)).append("\",\"true_class\":\"").append(esc(it.expected)).append("\",\"raw_predicted\":\"").append(esc(it.analysis.genre)).append("\",\"predicted\":\"").append(esc(it.predicted)).append("\",\"top3\":\"").append(esc(join(it.top3))).append("\",\"top1_ok\":").append(it.ok1).append(",\"top3_ok\":").append(it.ok3).append("}\n");
         return b.toString();
     }
 
@@ -162,8 +165,8 @@ public final class AnalyzerBenchmark {
         b.append("  \"missing_labels\": ").append(missing).append(",\n");
         b.append("  \"top1_correct\": ").append(top1).append(",\n");
         b.append("  \"top3_correct\": ").append(top3).append(",\n");
-        b.append("  \"top1_accuracy\": ").append(total == 0 ? "0" : num(top1 / (float)Math.max(1, labels))).append(",\n");
-        b.append("  \"top3_accuracy\": ").append(total == 0 ? "0" : num(top3 / (float)Math.max(1, labels))).append(",\n");
+        b.append("  \"top1_accuracy\": ").append(num(top1 / (float)Math.max(1, labels))).append(",\n");
+        b.append("  \"top3_accuracy\": ").append(num(top3 / (float)Math.max(1, labels))).append(",\n");
         b.append("  \"errors\": ").append(errors.size()).append("\n}");
         return b.toString();
     }
@@ -178,7 +181,7 @@ public final class AnalyzerBenchmark {
         b.append("- Top1: ").append(top1).append(" / ").append(labels).append(" = ").append(Math.round(100f * top1 / Math.max(1, labels))).append("%\n");
         b.append("- Top3: ").append(top3).append(" / ").append(labels).append(" = ").append(Math.round(100f * top3 / Math.max(1, labels))).append("%\n");
         b.append("- Errors: ").append(errors.size()).append("\n\n");
-        b.append("## Что это значит\n\n0% плохо, 100% идеально. Сейчас это тест понимания картинки, не тест рисования.\n\n");
+        b.append("## Смысл\n\n0% плохо, 100% идеально. Patch 18 отдельно показывает raw_predicted и corrected predicted.\n\n");
         b.append("## Частые предсказания\n\n").append(mapMd(stats.predicted));
         b.append("\n## Частые ошибки\n\n").append(mapMd(stats.confusion));
         return b.toString();
@@ -194,20 +197,9 @@ public final class AnalyzerBenchmark {
     }
 
     private static void inc(Map<String,Integer> map, String key) { Integer v = map.get(key); map.put(key, v == null ? 1 : v + 1); }
-
-    private static String readText(File f) {
-        try {
-            BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
-            StringBuilder b = new StringBuilder(); String line; while ((line = r.readLine()) != null) b.append(line).append('\n'); r.close(); return b.toString();
-        } catch (Exception e) { return ""; }
-    }
-    private static String jsonString(String json, String key) {
-        String q = "\"" + key + "\""; int i = json.indexOf(q); if (i < 0) return ""; int c = json.indexOf(':', i); if (c < 0) return ""; int a = json.indexOf('"', c + 1); if (a < 0) return ""; int b = json.indexOf('"', a + 1); if (b < 0) return ""; return json.substring(a + 1, b);
-    }
-    private static String jsonArrayInline(String json, String key) {
-        String q = "\"" + key + "\""; int i = json.indexOf(q); if (i < 0) return ""; int a = json.indexOf('[', i); int b = json.indexOf(']', a); if (a < 0 || b < 0) return ""; return json.substring(a + 1, b).replace("\"", "").replace("\n", " ").trim();
-    }
-
+    private static String readText(File f) { try { BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8")); StringBuilder b = new StringBuilder(); String line; while ((line = r.readLine()) != null) b.append(line).append('\n'); r.close(); return b.toString(); } catch (Exception e) { return ""; } }
+    private static String jsonString(String json, String key) { String q = "\"" + key + "\""; int i = json.indexOf(q); if (i < 0) return ""; int c = json.indexOf(':', i); if (c < 0) return ""; int a = json.indexOf('"', c + 1); if (a < 0) return ""; int b = json.indexOf('"', a + 1); if (b < 0) return ""; return json.substring(a + 1, b); }
+    private static String jsonArrayInline(String json, String key) { String q = "\"" + key + "\""; int i = json.indexOf(q); if (i < 0) return ""; int a = json.indexOf('[', i); int b = json.indexOf(']', a); if (a < 0 || b < 0) return ""; return json.substring(a + 1, b).replace("\"", "").replace("\n", " ").trim(); }
     private static boolean isImageName(String name) { String n = name.toLowerCase(Locale.US); return n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") || n.endsWith(".webp") || n.endsWith(".bmp"); }
     private static String timestamp() { return new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()); }
     private static String num(float v) { return String.format(Locale.US, "%.4f", v); }
@@ -218,21 +210,8 @@ public final class AnalyzerBenchmark {
     private static void zipDir(File dir, File zipFile) throws Exception { ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(zipFile)); addDir(zip, dir, dir.getAbsolutePath().length() + 1); zip.close(); }
     private static void addDir(ZipOutputStream zip, File file, int rootLen) throws Exception { if (file.isDirectory()) { File[] kids = file.listFiles(); if (kids != null) for (File kid : kids) addDir(zip, kid, rootLen); } else { zip.putNextEntry(new ZipEntry(file.getAbsolutePath().substring(rootLen))); FileInputStream in = new FileInputStream(file); byte[] buf = new byte[8192]; int n; while ((n = in.read(buf)) > 0) zip.write(buf, 0, n); in.close(); zip.closeEntry(); } }
 
-    private static final class BenchImage {
-        final String relativeName; final File file; final String expected; final String secondary;
-        private BenchImage(String relativeName, File file, String expected, String secondary) { this.relativeName = relativeName; this.file = file; this.expected = expected; this.secondary = secondary; }
-        static BenchImage fromFile(File root, File file) {
-            String rel = file.getAbsolutePath().substring(root.getAbsolutePath().length() + 1).replace(File.separatorChar, '/');
-            File side = new File(file.getParentFile(), stripExt(file.getName()) + ".json");
-            String json = readText(side);
-            String trueClass = jsonString(json, "true_class");
-            if (trueClass.length() == 0 && file.getParentFile() != null) trueClass = file.getParentFile().getName();
-            String secondary = jsonArrayInline(json, "secondary_classes");
-            return new BenchImage(rel, file, trueClass, secondary);
-        }
-        private static String stripExt(String n) { int i = n.lastIndexOf('.'); return i > 0 ? n.substring(0, i) : n; }
-    }
-    private static final class ItemResult { final String name, expected, secondary; final ImageAnalysis analysis; final List<String> top3; final boolean ok1, ok3, hasExpected; ItemResult(String name, String expected, String secondary, ImageAnalysis analysis, List<String> top3, boolean ok1, boolean ok3, boolean hasExpected) { this.name = name; this.expected = expected; this.secondary = secondary; this.analysis = analysis; this.top3 = top3; this.ok1 = ok1; this.ok3 = ok3; this.hasExpected = hasExpected; } }
+    private static final class BenchImage { final String relativeName; final File file; final String expected; final String secondary; private BenchImage(String relativeName, File file, String expected, String secondary) { this.relativeName = relativeName; this.file = file; this.expected = expected; this.secondary = secondary; } static BenchImage fromFile(File root, File file) { String rel = file.getAbsolutePath().substring(root.getAbsolutePath().length() + 1).replace(File.separatorChar, '/'); File side = new File(file.getParentFile(), stripExt(file.getName()) + ".json"); String json = readText(side); String trueClass = jsonString(json, "true_class"); if (trueClass.length() == 0 && file.getParentFile() != null) trueClass = file.getParentFile().getName(); String secondary = jsonArrayInline(json, "secondary_classes"); return new BenchImage(rel, file, trueClass, secondary); } private static String stripExt(String n) { int i = n.lastIndexOf('.'); return i > 0 ? n.substring(0, i) : n; } }
+    private static final class ItemResult { final String name, expected, secondary, predicted, note; final ImageAnalysis analysis; final List<String> top3; final boolean ok1, ok3, hasExpected; ItemResult(String name, String expected, String secondary, ImageAnalysis analysis, String predicted, String note, List<String> top3, boolean ok1, boolean ok3, boolean hasExpected) { this.name = name; this.expected = expected; this.secondary = secondary; this.analysis = analysis; this.predicted = predicted; this.note = note; this.top3 = top3; this.ok1 = ok1; this.ok3 = ok3; this.hasExpected = hasExpected; } }
     private static final class Stats { final Map<String,Integer> expected = new HashMap<>(); final Map<String,Integer> predicted = new HashMap<>(); final Map<String,Integer> confusion = new HashMap<>(); int wrong = 0; int missing = 0; }
     public static final class Result { public final String inputDir, zipPath; public final int images, errors, labelsFound, top1, top3, missingLabels; public Result(String inputDir, String zipPath, int images, int errors, int labelsFound, int top1, int top3, int missingLabels) { this.inputDir = inputDir; this.zipPath = zipPath; this.images = images; this.errors = errors; this.labelsFound = labelsFound; this.top1 = top1; this.top3 = top3; this.missingLabels = missingLabels; } }
 }
