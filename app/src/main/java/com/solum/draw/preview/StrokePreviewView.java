@@ -141,46 +141,15 @@ public final class StrokePreviewView extends View {
         ensureVision();
         if (vision == null) return;
 
-        RectF df = new RectF(dst);
-
-        paint.setStyle(Paint.Style.FILL);
-        int idx = 0;
-        for (VisionRegionMap.Region r : vision.displayRegions()) {
-            RectF rr = r.rectIn(df);
-            if (rr.width() < 12 || rr.height() < 12) continue;
-
-            int alpha = idx == 0 ? 34 : 22;
-            int color;
-            switch (idx % 6) {
-                case 0: color = Color.argb(alpha, 34, 230, 242); break;
-                case 1: color = Color.argb(alpha, 255, 196, 72); break;
-                case 2: color = Color.argb(alpha, 155, 107, 255); break;
-                case 3: color = Color.argb(alpha, 80, 255, 150); break;
-                case 4: color = Color.argb(alpha, 255, 90, 140); break;
-                default: color = Color.argb(alpha, 120, 180, 255); break;
-            }
-
-            paint.setColor(color);
-            canvas.drawRoundRect(rr, 10f, 10f, paint);
-
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(idx == 0 ? 2.0f : 1.2f);
-            paint.setColor(idx == 0 ? Color.argb(170, 34, 230, 242) : Color.argb(105, 230, 240, 255));
-            canvas.drawRoundRect(rr, 10f, 10f, paint);
-            paint.setStyle(Paint.Style.FILL);
-
-            idx++;
-            if (idx >= 8) break;
-        }
-
-        drawLocalContourSegments(canvas, dst, true);
-        drawLocalContourSegments(canvas, dst, false);
-
-        drawRoute(canvas, dst);
+        // Contour mode is now sketch-first:
+        // no route bubbles here, no huge region fills, no mask-rectangle fan.
+        drawEdgeSketchSegments(canvas, dst, true);
+        drawEdgeSketchSegments(canvas, dst, false);
+        drawCompactRegionHints(canvas, dst);
     }
 
-    private void drawLocalContourSegments(Canvas canvas, Rect dst, boolean glow) {
-        if (vision == null || vision.gridWidth <= 1 || vision.gridHeight <= 1) return;
+    private void drawEdgeSketchSegments(Canvas canvas, Rect dst, boolean glow) {
+        if (vision == null || vision.gridWidth <= 2 || vision.gridHeight <= 2 || vision.edge == null) return;
 
         int gw = vision.gridWidth;
         int gh = vision.gridHeight;
@@ -188,34 +157,59 @@ public final class StrokePreviewView extends View {
         float sy = dst.height() / (float) gh;
 
         Path path = new Path();
+        int drawn = 0;
+        int maxSegments = glow ? 4200 : 5200;
 
         for (int y = 1; y < gh - 1; y++) {
             for (int x = 1; x < gw - 1; x++) {
                 int id = y * gw + x;
-                if (!vision.subjectMask[id]) continue;
+                if (!vision.edge[id]) continue;
 
-                float x0 = dst.left + x * sx;
-                float y0 = dst.top + y * sy;
-                float x1 = x0 + sx;
-                float y1 = y0 + sy;
+                int n = 0;
+                if (vision.edge[id - 1]) n++;
+                if (vision.edge[id + 1]) n++;
+                if (vision.edge[id - gw]) n++;
+                if (vision.edge[id + gw]) n++;
+                if (vision.edge[id - gw - 1]) n++;
+                if (vision.edge[id - gw + 1]) n++;
+                if (vision.edge[id + gw - 1]) n++;
+                if (vision.edge[id + gw + 1]) n++;
 
-                if (!vision.subjectMask[id - 1]) {
-                    path.moveTo(x0, y0);
-                    path.lineTo(x0, y1);
+                // Remove isolated sensor/noise dots.
+                if (n < 2) continue;
+
+                float cx = dst.left + (x + 0.5f) * sx;
+                float cy = dst.top + (y + 0.5f) * sy;
+
+                boolean horizontal = vision.edge[id - 1] || vision.edge[id + 1];
+                boolean vertical = vision.edge[id - gw] || vision.edge[id + gw];
+                boolean diagA = vision.edge[id - gw - 1] || vision.edge[id + gw + 1];
+                boolean diagB = vision.edge[id - gw + 1] || vision.edge[id + gw - 1];
+
+                if (horizontal && drawn < maxSegments) {
+                    path.moveTo(cx - sx * 0.55f, cy);
+                    path.lineTo(cx + sx * 0.55f, cy);
+                    drawn++;
                 }
-                if (!vision.subjectMask[id + 1]) {
-                    path.moveTo(x1, y0);
-                    path.lineTo(x1, y1);
+                if (vertical && drawn < maxSegments) {
+                    path.moveTo(cx, cy - sy * 0.55f);
+                    path.lineTo(cx, cy + sy * 0.55f);
+                    drawn++;
                 }
-                if (!vision.subjectMask[id - gw]) {
-                    path.moveTo(x0, y0);
-                    path.lineTo(x1, y0);
+                if (!horizontal && !vertical && diagA && drawn < maxSegments) {
+                    path.moveTo(cx - sx * 0.45f, cy - sy * 0.45f);
+                    path.lineTo(cx + sx * 0.45f, cy + sy * 0.45f);
+                    drawn++;
                 }
-                if (!vision.subjectMask[id + gw]) {
-                    path.moveTo(x0, y1);
-                    path.lineTo(x1, y1);
+                if (!horizontal && !vertical && diagB && drawn < maxSegments) {
+                    path.moveTo(cx + sx * 0.45f, cy - sy * 0.45f);
+                    path.lineTo(cx - sx * 0.45f, cy + sy * 0.45f);
+                    drawn++;
                 }
+
+                if (drawn >= maxSegments) break;
             }
+            if (drawn >= maxSegments) break;
         }
 
         paint.setStyle(Paint.Style.STROKE);
@@ -223,14 +217,38 @@ public final class StrokePreviewView extends View {
         paint.setStrokeJoin(Paint.Join.ROUND);
 
         if (glow) {
-            paint.setStrokeWidth(5.0f);
-            paint.setColor(Color.argb(58, 34, 230, 242));
+            paint.setStrokeWidth(4.6f);
+            paint.setColor(Color.argb(34, 34, 230, 242));
         } else {
-            paint.setStrokeWidth(2.0f);
-            paint.setColor(Color.argb(235, 34, 230, 242));
+            paint.setStrokeWidth(1.55f);
+            paint.setColor(Color.argb(220, 34, 230, 242));
         }
 
         canvas.drawPath(path, paint);
+    }
+
+    private void drawCompactRegionHints(Canvas canvas, Rect dst) {
+        if (vision == null) return;
+
+        RectF df = new RectF(dst);
+        int idx = 0;
+
+        for (VisionRegionMap.Region r : vision.displayRegions()) {
+            RectF rr = r.rectIn(df);
+
+            // Ignore giant background islands and tiny false positives.
+            float cover = (rr.width() * rr.height()) / Math.max(1f, dst.width() * dst.height());
+            if (cover > 0.52f) continue;
+            if (rr.width() < 18 || rr.height() < 18) continue;
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(idx == 0 ? 1.8f : 1.1f);
+            paint.setColor(idx == 0 ? Color.argb(145, 255, 196, 72) : Color.argb(90, 155, 107, 255));
+            canvas.drawRoundRect(rr, 10f, 10f, paint);
+
+            idx++;
+            if (idx >= 5) break;
+        }
     }
 
     private void drawRegionBoxes(Canvas canvas, Rect dst, boolean strong) {
