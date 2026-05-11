@@ -8,9 +8,11 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PointF;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.view.View;
 import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
+import java.util.List;
 
 public final class StrokePreviewView extends View {
     private static final int MODE_SOURCE = 0;
@@ -20,6 +22,7 @@ public final class StrokePreviewView extends View {
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Bitmap sourceImage;
+    private VisionRegionMap regionMap;
     private StrokePlan plan;
     private int previewMode = MODE_SOURCE;
     private String routeKind = "general";
@@ -36,6 +39,7 @@ public final class StrokePreviewView extends View {
 
     public void setSourceImage(Bitmap sourceImage) {
         this.sourceImage = sourceImage;
+        this.regionMap = VisionRegionMap.analyze(sourceImage);
         this.previewMode = MODE_SOURCE;
         invalidate();
     }
@@ -98,80 +102,85 @@ public final class StrokePreviewView extends View {
             canvas.drawRect(dst, paint);
             return;
         }
-        paint.setAlpha(previewMode == MODE_CONTOUR ? 88 : 190);
+        paint.setAlpha(previewMode == MODE_CONTOUR ? 82 : 200);
         canvas.drawBitmap(sourceImage, null, dst, paint);
         paint.setAlpha(255);
         if (previewMode == MODE_CONTOUR) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(115, 0, 0, 0));
+            paint.setColor(Color.argb(126, 0, 0, 0));
             canvas.drawRect(dst, paint);
         }
     }
 
     private void drawRouteOverlay(Canvas canvas, Rect dst) {
-        int[][] pts;
-        String[] names;
-        if (routeKind.equals("person")) {
-            pts = new int[][] {{50,16},{50,38},{50,58},{50,28},{58,72}};
-            names = new String[] {"фон", "силуэт", "тело", "лицо", "детали"};
-        } else if (routeKind.equals("ui")) {
-            pts = new int[][] {{50,12},{30,36},{56,38},{72,54},{44,68}};
-            names = new String[] {"фон", "панели", "карточки", "иконки", "текст"};
-        } else if (routeKind.equals("logo")) {
-            pts = new int[][] {{50,18},{50,36},{50,50},{50,64},{50,78}};
-            names = new String[] {"фон", "знак", "вырезы", "glow", "края"};
-        } else if (routeKind.equals("scene")) {
-            pts = new int[][] {{50,16},{50,38},{50,62},{34,58},{66,58}};
-            names = new String[] {"фон", "массы", "объект", "тени", "детали"};
-        } else {
-            pts = new int[][] {{50,18},{50,45},{50,68},{36,58},{66,58}};
-            names = new String[] {"фон", "форма", "объект", "тени", "детали"};
-        }
-        for (int i = 0; i < pts.length; i++) {
-            float x = dst.left + dst.width() * pts[i][0] / 100f;
-            float y = dst.top + dst.height() * pts[i][1] / 100f;
+        if (regionMap == null) regionMap = VisionRegionMap.analyze(sourceImage);
+        List<VisionRegionMap.RoutePoint> pts = regionMap.routePoints();
+        for (VisionRegionMap.RoutePoint p : pts) {
+            float x = dst.left + dst.width() * p.x;
+            float y = dst.top + dst.height() * p.y;
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(230, 6, 14, 22));
-            canvas.drawCircle(x, y, 24f, paint);
+            paint.setColor(Color.argb(235, 6, 14, 22));
+            canvas.drawCircle(x, y, 25f, paint);
             paint.setColor(Color.rgb(34, 230, 242));
-            canvas.drawCircle(x, y, 19f, paint);
+            canvas.drawCircle(x, y, 20f, paint);
             paint.setColor(Color.rgb(5, 10, 15));
             paint.setTextSize(20f);
             paint.setTextAlign(Paint.Align.CENTER);
-            canvas.drawText(String.valueOf(i + 1), x, y + 7f, paint);
+            canvas.drawText(String.valueOf(p.index), x, y + 7f, paint);
             paint.setTextAlign(Paint.Align.LEFT);
             paint.setTextSize(17f);
             paint.setColor(Color.WHITE);
-            canvas.drawText(names[i], x + 26f, y + 6f, paint);
+            canvas.drawText(p.label, x + 27f, y + 6f, paint);
         }
+        drawRegionBoxes(canvas, dst, false);
     }
 
     private void drawContourOverlay(Canvas canvas, Rect dst) {
         if (sourceImage == null || dst.width() < 8 || dst.height() < 8) return;
-        int step = Math.max(7, Math.min(dst.width(), dst.height()) / 64);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2.8f);
-        paint.setColor(Color.rgb(34, 230, 242));
-        int sw = sourceImage.getWidth();
-        int sh = sourceImage.getHeight();
-        for (int y = dst.top + step; y < dst.bottom - step; y += step) {
-            Path p = new Path();
-            boolean active = false;
-            int run = 0;
-            for (int x = dst.left + step; x < dst.right - step; x += step) {
-                int ix = Math.min(sw - 2, Math.max(1, (int)((x - dst.left) * sw / (float)dst.width())));
-                int iy = Math.min(sh - 2, Math.max(1, (int)((y - dst.top) * sh / (float)dst.height())));
-                int e = Math.abs(luma(sourceImage.getPixel(ix - 1, iy)) - luma(sourceImage.getPixel(ix + 1, iy)))
-                      + Math.abs(luma(sourceImage.getPixel(ix, iy - 1)) - luma(sourceImage.getPixel(ix, iy + 1)));
-                if (e > 62) {
-                    if (!active) { p.moveTo(x, y); active = true; run = 1; }
-                    else { p.lineTo(x, y); run++; }
-                } else if (active) {
-                    if (run >= 3) canvas.drawPath(p, paint);
-                    p.reset(); active = false; run = 0;
-                }
+        if (regionMap == null) regionMap = VisionRegionMap.analyze(sourceImage);
+        drawRegionBoxes(canvas, dst, true);
+        drawEdgeCells(canvas, dst);
+    }
+
+    private void drawRegionBoxes(Canvas canvas, Rect dst, boolean strong) {
+        if (regionMap == null) return;
+        RectF dstF = new RectF(dst);
+        List<VisionRegionMap.Region> regions = regionMap.contourRegions();
+        int count = 0;
+        for (VisionRegionMap.Region r : regions) {
+            RectF rr = r.rectIn(dstF);
+            if (rr.width() < 12 || rr.height() < 12) continue;
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(strong ? 4.0f : 2.2f);
+            paint.setColor(count == 0 ? Color.rgb(34, 230, 242) : Color.argb(strong ? 210 : 120, 155, 107, 255));
+            canvas.drawRoundRect(rr, 12f, 12f, paint);
+            if (strong && count < 5) {
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.argb(190, 6, 14, 22));
+                canvas.drawRoundRect(new RectF(rr.left, rr.top, Math.min(rr.left + 92, rr.right), rr.top + 28), 8f, 8f, paint);
+                paint.setColor(Color.WHITE);
+                paint.setTextSize(16f);
+                canvas.drawText("область " + (count + 1), rr.left + 8, rr.top + 20, paint);
             }
-            if (active && run >= 3) canvas.drawPath(p, paint);
+            count++;
+        }
+    }
+
+    private void drawEdgeCells(Canvas canvas, Rect dst) {
+        int gw = regionMap.gridWidth;
+        int gh = regionMap.gridHeight;
+        float cw = dst.width() / (float)Math.max(1, gw);
+        float ch = dst.height() / (float)Math.max(1, gh);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.rgb(34, 230, 242));
+        int skip = Math.max(1, Math.min(gw, gh) / 96);
+        for (int y = 1; y < gh - 1; y += skip) {
+            for (int x = 1; x < gw - 1; x += skip) {
+                if (!regionMap.isEdgeCell(x, y)) continue;
+                float px = dst.left + x * cw;
+                float py = dst.top + y * ch;
+                canvas.drawRect(px, py, px + Math.max(1.2f, cw * 0.8f), py + Math.max(1.2f, ch * 0.8f), paint);
+            }
         }
     }
 
