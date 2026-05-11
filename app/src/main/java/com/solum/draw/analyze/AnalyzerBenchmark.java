@@ -4,6 +4,9 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Environment;
+import com.solum.draw.vision.MlKitVisionProbe;
+import com.solum.draw.vision.VisionDecisionEngine;
+import com.solum.draw.vision.VisionResult;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -59,16 +62,23 @@ public final class AnalyzerBenchmark {
                 Bitmap bitmap = BitmapFactory.decodeStream(new FileInputStream(img.file));
                 if (bitmap == null) throw new IllegalArgumentException("decode returned null");
                 ImageAnalysis analysis = ImageAnalyzer.analyze(bitmap, img.relativeName);
-                String predicted = SceneArtHeuristic.correctedGenre(analysis);
+                String oldPredicted = SceneArtHeuristic.correctedGenre(analysis);
                 String note = SceneArtHeuristic.note(analysis);
-                List<String> candidates = top3Candidates(analysis, predicted);
+
+                VisionResult ml = MlKitVisionProbe.analyzeBlocking(bitmap, 9000L);
+                String hint = analysis.genre + " " + analysis.warnings + " " + note + " old=" + oldPredicted;
+                VisionDecisionEngine.Decision decision = VisionDecisionEngine.analyze(ml.labels, ml.objects, hint, "");
+
+                String predicted = decision.datasetClass;
+                List<String> candidates = top3FromDecision(decision, analysis, predicted);
+
                 boolean hasExpected = img.expected.length() > 0;
                 boolean ok1 = hasExpected && img.expected.equals(predicted);
                 boolean ok3 = hasExpected && contains(candidates, img.expected);
                 if (!hasExpected) missingLabels++;
                 if (ok1) top1++;
                 if (ok3) top3++;
-                items.add(new ItemResult(img.relativeName, img.expected, img.secondary, analysis, predicted, note, candidates, ok1, ok3, hasExpected));
+                items.add(new ItemResult(img.relativeName, img.expected, img.secondary, analysis, oldPredicted, predicted, decision.topLine, decision.reason, ml.provider, note, candidates, ok1, ok3, hasExpected));
             } catch (Exception e) {
                 errors.add(img.relativeName + ": " + e.getMessage());
             }
@@ -122,6 +132,27 @@ public final class AnalyzerBenchmark {
         return c;
     }
 
+
+    private static List<String> top3FromDecision(VisionDecisionEngine.Decision d, ImageAnalysis a, String predicted) {
+        ArrayList<String> c = new ArrayList<>();
+        if (d != null && d.topLine != null && d.topLine.length() > 0) {
+            String[] parts = d.topLine.split("\\|");
+            for (String part : parts) {
+                String name = part.trim();
+                int sp = name.indexOf(' ');
+                if (sp > 0) name = name.substring(0, sp).trim();
+                add(c, name);
+                if (c.size() >= 3) break;
+            }
+        }
+        add(c, predicted);
+        if (c.size() < 3) {
+            for (String x : top3Candidates(a, predicted)) add(c, x);
+        }
+        while (c.size() > 3) c.remove(c.size() - 1);
+        return c;
+    }
+
     private static void add(List<String> list, String v) { if (v != null && v.length() > 0 && !list.contains(v)) list.add(v); }
     private static boolean contains(List<String> list, String v) { for (String s : list) if (s.equals(v)) return true; return false; }
 
@@ -139,13 +170,13 @@ public final class AnalyzerBenchmark {
     }
 
     private static String resultsCsv(List<ItemResult> items) {
-        StringBuilder b = new StringBuilder("file,true_class,secondary_classes,raw_predicted,predicted,top3,top1_ok,top3_ok,confidence,note\n");
+        StringBuilder b = new StringBuilder("file,true_class,secondary_classes,old_predicted,predicted,router_top,ml_provider,top3,top1_ok,top3_ok,confidence,note,router_reason\n");
         for (ItemResult it : items) b.append(csv(it.name)).append(',').append(csv(it.expected)).append(',').append(csv(it.secondary)).append(',').append(csv(it.analysis.genre)).append(',').append(csv(it.predicted)).append(',').append(csv(join(it.top3))).append(',').append(it.ok1).append(',').append(it.ok3).append(',').append(num(it.analysis.confidence)).append(',').append(csv(it.note)).append('\n');
         return b.toString();
     }
 
     private static String mistakesCsv(List<ItemResult> items) {
-        StringBuilder b = new StringBuilder("file,true_class,raw_predicted,predicted,top3,confidence,note,warnings\n");
+        StringBuilder b = new StringBuilder("file,true_class,old_predicted,predicted,router_top,top3,confidence,note,warnings,router_reason\n");
         for (ItemResult it : items) if (it.hasExpected && !it.ok1) b.append(csv(it.name)).append(',').append(csv(it.expected)).append(',').append(csv(it.analysis.genre)).append(',').append(csv(it.predicted)).append(',').append(csv(join(it.top3))).append(',').append(num(it.analysis.confidence)).append(',').append(csv(it.note)).append(',').append(csv(it.analysis.warnings)).append('\n');
         return b.toString();
     }
@@ -181,7 +212,7 @@ public final class AnalyzerBenchmark {
         b.append("- Top1: ").append(top1).append(" / ").append(labels).append(" = ").append(Math.round(100f * top1 / Math.max(1, labels))).append("%\n");
         b.append("- Top3: ").append(top3).append(" / ").append(labels).append(" = ").append(Math.round(100f * top3 / Math.max(1, labels))).append("%\n");
         b.append("- Errors: ").append(errors.size()).append("\n\n");
-        b.append("## Смысл\n\n0% плохо, 100% идеально. Patch 18 отдельно показывает raw_predicted и corrected predicted.\n\n");
+        b.append("## Смысл\n\n0% плохо, 100% идеально. Patch 27G: Bench теперь использует ML Kit + общий VisionDecisionEngine. old_predicted оставлен только для сравнения.\n\n");
         b.append("## Частые предсказания\n\n").append(mapMd(stats.predicted));
         b.append("\n## Частые ошибки\n\n").append(mapMd(stats.confusion));
         return b.toString();
@@ -211,7 +242,7 @@ public final class AnalyzerBenchmark {
     private static void addDir(ZipOutputStream zip, File file, int rootLen) throws Exception { if (file.isDirectory()) { File[] kids = file.listFiles(); if (kids != null) for (File kid : kids) addDir(zip, kid, rootLen); } else { zip.putNextEntry(new ZipEntry(file.getAbsolutePath().substring(rootLen))); FileInputStream in = new FileInputStream(file); byte[] buf = new byte[8192]; int n; while ((n = in.read(buf)) > 0) zip.write(buf, 0, n); in.close(); zip.closeEntry(); } }
 
     private static final class BenchImage { final String relativeName; final File file; final String expected; final String secondary; private BenchImage(String relativeName, File file, String expected, String secondary) { this.relativeName = relativeName; this.file = file; this.expected = expected; this.secondary = secondary; } static BenchImage fromFile(File root, File file) { String rel = file.getAbsolutePath().substring(root.getAbsolutePath().length() + 1).replace(File.separatorChar, '/'); File side = new File(file.getParentFile(), stripExt(file.getName()) + ".json"); String json = readText(side); String trueClass = jsonString(json, "true_class"); if (trueClass.length() == 0 && file.getParentFile() != null) trueClass = file.getParentFile().getName(); String secondary = jsonArrayInline(json, "secondary_classes"); return new BenchImage(rel, file, trueClass, secondary); } private static String stripExt(String n) { int i = n.lastIndexOf('.'); return i > 0 ? n.substring(0, i) : n; } }
-    private static final class ItemResult { final String name, expected, secondary, predicted, note; final ImageAnalysis analysis; final List<String> top3; final boolean ok1, ok3, hasExpected; ItemResult(String name, String expected, String secondary, ImageAnalysis analysis, String predicted, String note, List<String> top3, boolean ok1, boolean ok3, boolean hasExpected) { this.name = name; this.expected = expected; this.secondary = secondary; this.analysis = analysis; this.predicted = predicted; this.note = note; this.top3 = top3; this.ok1 = ok1; this.ok3 = ok3; this.hasExpected = hasExpected; } }
+    private static final class ItemResult { final String name, expected, secondary, oldPredicted, predicted, routerTop, routerReason, mlProvider, note; final ImageAnalysis analysis; final List<String> top3; final boolean ok1, ok3, hasExpected; ItemResult(String name, String expected, String secondary, ImageAnalysis analysis, String oldPredicted, String predicted, String routerTop, String routerReason, String mlProvider, String note, List<String> top3, boolean ok1, boolean ok3, boolean hasExpected) { this.name = name; this.expected = expected; this.secondary = secondary; this.analysis = analysis; this.oldPredicted = oldPredicted; this.predicted = predicted; this.routerTop = routerTop; this.routerReason = routerReason; this.mlProvider = mlProvider; this.note = note; this.top3 = top3; this.ok1 = ok1; this.ok3 = ok3; this.hasExpected = hasExpected; } }
     private static final class Stats { final Map<String,Integer> expected = new HashMap<>(); final Map<String,Integer> predicted = new HashMap<>(); final Map<String,Integer> confusion = new HashMap<>(); int wrong = 0; int missing = 0; }
     public static final class Result { public final String inputDir, zipPath; public final int images, errors, labelsFound, top1, top3, missingLabels; public Result(String inputDir, String zipPath, int images, int errors, int labelsFound, int top1, int top3, int missingLabels) { this.inputDir = inputDir; this.zipPath = zipPath; this.images = images; this.errors = errors; this.labelsFound = labelsFound; this.top1 = top1; this.top3 = top3; this.missingLabels = missingLabels; } }
 }

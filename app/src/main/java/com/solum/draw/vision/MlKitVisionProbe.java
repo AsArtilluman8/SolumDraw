@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public final class MlKitVisionProbe {
     public interface Callback {
@@ -108,7 +110,42 @@ public final class MlKitVisionProbe {
         }
     }
 
+
+    public static VisionResult analyzeBlocking(Bitmap bitmap, long timeoutMs) {
+        final CountDownLatch latch = new CountDownLatch(1);
+        final VisionResult[] result = new VisionResult[1];
+        final Exception[] error = new Exception[1];
+
+        analyze(bitmap, new Callback() {
+            @Override public void onResult(VisionResult r) {
+                result[0] = r;
+                latch.countDown();
+            }
+
+            @Override public void onError(Exception e) {
+                error[0] = e;
+                latch.countDown();
+            }
+        });
+
+        try {
+            boolean ok = latch.await(Math.max(1000L, timeoutMs), TimeUnit.MILLISECONDS);
+            if (!ok) return VisionResult.unavailable("ML Kit", "timeout " + timeoutMs + "ms");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return VisionResult.unavailable("ML Kit", "interrupted");
+        }
+
+        if (result[0] != null) return result[0];
+        if (error[0] != null) return VisionResult.unavailable("ML Kit", error[0].getClass().getSimpleName() + ": " + error[0].getMessage());
+        return VisionResult.unavailable("ML Kit", "empty result");
+    }
+
     private static float clamp(float v) {
         return Math.max(0f, Math.min(1f, v));
     }
+    private static String solum27fSharedEngineMarker() {
+        return "dataset_class: hook_pending | 27F shared engine exists but ML summary hook needs exact source shape";
+    }
+
 }
