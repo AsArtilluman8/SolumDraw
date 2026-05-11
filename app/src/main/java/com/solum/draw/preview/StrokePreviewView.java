@@ -8,18 +8,24 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PointF;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.view.View;
 import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
+import com.solum.draw.vision.VisionRegionMap;
+import java.util.List;
 
 public final class StrokePreviewView extends View {
     private static final int MODE_SOURCE = 0;
     private static final int MODE_ANALYSIS = 1;
-    private static final int MODE_WHITE = 2;
+    private static final int MODE_ROUTE = 2;
+    private static final int MODE_CONTOUR = 3;
+    private static final int MODE_WHITE = 4;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Bitmap sourceImage;
     private Bitmap analysisOverlay;
+    private VisionRegionMap vision;
     private StrokePlan plan;
     private int previewMode = MODE_SOURCE;
 
@@ -27,12 +33,13 @@ public final class StrokePreviewView extends View {
         super(context);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
-        setBackgroundColor(Color.rgb(16, 18, 24));
+        setBackgroundColor(Color.rgb(4, 10, 17));
     }
 
     public void setSourceImage(Bitmap sourceImage) {
         this.sourceImage = sourceImage;
         this.analysisOverlay = null;
+        this.vision = VisionRegionMap.analyze(sourceImage);
         this.previewMode = MODE_SOURCE;
         invalidate();
     }
@@ -43,86 +50,147 @@ public final class StrokePreviewView extends View {
         invalidate();
     }
 
-    public void setPlan(StrokePlan plan) {
-        this.plan = plan;
-        invalidate();
-    }
+    public void setPlan(StrokePlan plan) { this.plan = plan; invalidate(); }
 
     public String togglePreviewMode() {
-        if (analysisOverlay != null) {
-            previewMode = (previewMode + 1) % 3;
-        } else {
-            previewMode = previewMode == MODE_WHITE ? MODE_SOURCE : MODE_WHITE;
-        }
+        previewMode = (previewMode + 1) % 5;
+        if (previewMode == MODE_ANALYSIS && analysisOverlay == null) previewMode = MODE_ROUTE;
         invalidate();
         return previewModeName();
     }
 
     public String previewModeName() {
-        if (previewMode == MODE_ANALYSIS && analysisOverlay != null) return "Анализ / overlay";
-        if (previewMode == MODE_WHITE) return "Белый холст";
+        if (previewMode == MODE_ANALYSIS && analysisOverlay != null) return "Анализ";
+        if (previewMode == MODE_ROUTE) return "Маршрут";
+        if (previewMode == MODE_CONTOUR) return "Контуры";
+        if (previewMode == MODE_WHITE) return "Холст";
         return "Исходник";
     }
 
     public Rect currentImageRect() {
-        Bitmap image = displayImage();
-        if (image == null) {
-            return new Rect(0, 0, Math.max(1, getWidth()), Math.max(1, getHeight()));
-        }
+        Bitmap image = displayImageBase();
+        if (image == null) return new Rect(0, 0, Math.max(1, getWidth()), Math.max(1, getHeight()));
         return fitRect(image.getWidth(), image.getHeight(), Math.max(1, getWidth()), Math.max(1, getHeight()));
     }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-
         Rect dst = currentImageRect();
         drawPreviewSurface(canvas, dst);
-
-        if (plan != null) {
-            canvas.save();
-            canvas.clipRect(dst);
-            canvas.translate(dst.left, dst.top);
-            drawPlan(canvas, plan);
-            canvas.restore();
-        }
-
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(previewMode == MODE_WHITE ? Color.rgb(20, 24, 32) : Color.WHITE);
-        paint.setTextSize(24f);
-        canvas.drawText("SolumDraw — " + previewModeName(), 24f, 40f, paint);
+        if (previewMode == MODE_ROUTE) drawRoute(canvas, dst);
+        if (previewMode == MODE_CONTOUR) drawContours(canvas, dst);
+        if (plan != null) drawPlanLayer(canvas, dst);
+        drawModeLabel(canvas);
     }
 
-    private Bitmap displayImage() {
+    private Bitmap displayImageBase() {
         if (previewMode == MODE_ANALYSIS && analysisOverlay != null) return analysisOverlay;
         return sourceImage;
     }
 
     private void drawPreviewSurface(Canvas canvas, Rect dst) {
+        canvas.drawColor(Color.rgb(4, 10, 17));
         paint.setStyle(Paint.Style.FILL);
-        canvas.drawColor(Color.rgb(16, 18, 24));
-
-        if (previewMode == MODE_WHITE || displayImage() == null) {
+        if (previewMode == MODE_WHITE || displayImageBase() == null) {
             paint.setColor(Color.rgb(238, 238, 232));
             canvas.drawRect(dst, paint);
-            paint.setColor(Color.rgb(42, 44, 50));
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(2f);
+            paint.setColor(Color.rgb(42, 44, 50));
             canvas.drawRect(dst, paint);
+            return;
+        }
+        Bitmap img = displayImageBase();
+        paint.setAlpha(previewMode == MODE_CONTOUR ? 96 : 220);
+        canvas.drawBitmap(img, null, dst, paint);
+        paint.setAlpha(255);
+        if (previewMode == MODE_CONTOUR) {
             paint.setStyle(Paint.Style.FILL);
-            return;
+            paint.setColor(Color.argb(118, 0, 0, 0));
+            canvas.drawRect(dst, paint);
         }
+    }
 
-        if (previewMode == MODE_ANALYSIS && analysisOverlay != null) {
-            paint.setAlpha(255);
-            canvas.drawBitmap(analysisOverlay, null, dst, paint);
-            return;
+    private void drawRoute(Canvas canvas, Rect dst) {
+        ensureVision();
+        if (vision == null) return;
+        List<VisionRegionMap.RoutePoint> points = vision.route();
+        for (VisionRegionMap.RoutePoint p : points) {
+            float x = dst.left + dst.width() * p.x;
+            float y = dst.top + dst.height() * p.y;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(235, 2, 8, 14));
+            canvas.drawCircle(x, y, 25f, paint);
+            paint.setColor(Color.rgb(34, 230, 242));
+            canvas.drawCircle(x, y, 20f, paint);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(20f);
+            paint.setFakeBoldText(true);
+            paint.setColor(Color.rgb(3, 8, 12));
+            canvas.drawText(String.valueOf(p.index), x, y + 7f, paint);
+            paint.setTextAlign(Paint.Align.LEFT);
+            paint.setTextSize(16f);
+            paint.setFakeBoldText(false);
+            paint.setColor(Color.WHITE);
+            canvas.drawText(p.label, x + 27f, y + 6f, paint);
         }
+        drawRegionBoxes(canvas, dst, false);
+    }
 
-        if (sourceImage != null) {
-            paint.setAlpha(96);
-            canvas.drawBitmap(sourceImage, null, dst, paint);
-            paint.setAlpha(255);
+    private void drawContours(Canvas canvas, Rect dst) {
+        ensureVision();
+        if (vision == null) return;
+        drawRegionBoxes(canvas, dst, true);
+        int gw = vision.gridWidth;
+        int gh = vision.gridHeight;
+        float cw = dst.width() / (float)Math.max(1, gw);
+        float ch = dst.height() / (float)Math.max(1, gh);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb(220, 34, 230, 242));
+        float dot = Math.max(1.0f, Math.min(cw, ch) * 0.36f);
+        for (int y = 1; y < gh - 1; y++) {
+            for (int x = 1; x < gw - 1; x++) {
+                if (!vision.isBoundary(x, y)) continue;
+                float px = dst.left + (x + .5f) * cw;
+                float py = dst.top + (y + .5f) * ch;
+                canvas.drawCircle(px, py, dot, paint);
+            }
         }
+    }
+
+    private void drawRegionBoxes(Canvas canvas, Rect dst, boolean strong) {
+        if (vision == null) return;
+        RectF df = new RectF(dst);
+        int i = 0;
+        for (VisionRegionMap.Region r : vision.displayRegions()) {
+            RectF rr = r.rectIn(df);
+            if (rr.width() < 16 || rr.height() < 16) continue;
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(strong ? 2.4f : 1.4f);
+            paint.setColor(i == 0 ? Color.argb(210, 34, 230, 242) : Color.argb(120, 155, 107, 255));
+            canvas.drawRoundRect(rr, 12f, 12f, paint);
+            if (++i >= 8) break;
+        }
+    }
+
+    private void drawPlanLayer(Canvas canvas, Rect dst) {
+        canvas.save();
+        canvas.clipRect(dst);
+        canvas.translate(dst.left, dst.top);
+        drawPlan(canvas, plan);
+        canvas.restore();
+    }
+
+    private void drawModeLabel(Canvas canvas) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(22f);
+        paint.setFakeBoldText(false);
+        canvas.drawText("SolumDraw — " + previewModeName(), 18f, 34f, paint);
+    }
+
+    private void ensureVision() {
+        if (vision == null && sourceImage != null) vision = VisionRegionMap.analyze(sourceImage);
     }
 
     private void drawPlan(Canvas canvas, StrokePlan plan) {
@@ -132,7 +200,6 @@ public final class StrokePreviewView extends View {
             paint.setColor(color);
             paint.setStrokeWidth(action.size);
             paint.setStyle(Paint.Style.STROKE);
-
             if (action.path.size() == 1) {
                 paint.setStyle(Paint.Style.FILL);
                 PointF p = action.path.get(0);
@@ -153,8 +220,7 @@ public final class StrokePreviewView extends View {
     private static int contrastForWhiteCanvas(int color) {
         int r = Color.red(color), g = Color.green(color), b = Color.blue(color);
         int luma = (r * 30 + g * 59 + b * 11) / 100;
-        if (luma > 210) return Color.rgb(80, 80, 80);
-        return color;
+        return luma > 210 ? Color.rgb(80, 80, 80) : color;
     }
 
     private static boolean isSuppressedPreviewStroke(StrokeAction action) {

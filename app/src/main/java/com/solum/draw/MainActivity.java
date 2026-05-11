@@ -5,7 +5,9 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -44,6 +46,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_IMAGE = 1001;
     private static final int REQUEST_BENCH_PERMISSION = 2002;
 
+    private TextView title;
     private TextView status;
     private StrokePreviewView previewView;
     private Bitmap sourceImage;
@@ -56,35 +59,43 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         CrashLogger.install(this);
-        RuntimeLog.line("boot", "SolumDraw Patch 18 started");
+        RuntimeLog.line("boot", "SolumDraw Patch 24 started");
         super.onCreate(savedInstanceState);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF101218);
+        root.setBackgroundColor(0xFF040A11);
+
+        title = new TextView(this);
+        title.setText("S O L U M  D R A W · V I S I O N");
+        title.setTextColor(0xFF22E6F2);
+        title.setTextSize(18f);
+        title.setLetterSpacing(0.18f);
+        title.setPadding(12, 10, 12, 6);
 
         status = new TextView(this);
-        status.setTextColor(0xFFFFFFFF);
+        status.setTextColor(0xFFEAF7FF);
         status.setTextSize(13f);
-        status.setPadding(18, 14, 18, 10);
-        status.setText("SolumDraw 18: анти-ложный UI/Text, анализ, benchmark, план рисования.");
+        status.setPadding(14, 10, 14, 10);
+        status.setBackground(panelBg());
+        status.setText("Готово. Импортируй картинку. Вид переключает: исходник → анализ → маршрут → контуры → холст.");
 
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setPadding(8, 8, 8, 4);
+        topBar.setPadding(4, 8, 4, 4);
 
         LinearLayout drawBar = new LinearLayout(this);
         drawBar.setOrientation(LinearLayout.HORIZONTAL);
-        drawBar.setPadding(8, 4, 8, 4);
+        drawBar.setPadding(4, 4, 4, 8);
 
-        Button importButton = button("Import");
-        Button analyzeButton = button("Analyze");
-        Button infoButton = button("Info");
-        Button canvasButton = button("View");
+        Button importButton = button("Импорт");
+        Button analyzeButton = button("Анализ");
+        Button infoButton = button("Инфо");
+        Button canvasButton = button("Вид");
         Button benchButton = button("Bench");
-        Button fastButton = button("Fast");
-        Button naturalButton = button("Natural");
-        Button exportButton = button("Export");
+        Button fastButton = button("Быстро");
+        Button naturalButton = button("Натур.");
+        Button exportButton = button("Экспорт");
 
         topBar.addView(importButton);
         topBar.addView(analyzeButton);
@@ -96,6 +107,7 @@ public final class MainActivity extends Activity {
         drawBar.addView(exportButton);
 
         previewView = new StrokePreviewView(this);
+        root.addView(title);
         root.addView(status);
         root.addView(topBar);
         root.addView(drawBar);
@@ -115,11 +127,31 @@ public final class MainActivity extends Activity {
     private Button button(String text) {
         Button button = new Button(this);
         button.setText(text);
-        button.setTextSize(10f);
+        button.setTextSize(11f);
+        button.setTextColor(0xFFEAF7FF);
         button.setAllCaps(false);
-        button.setPadding(2, 2, 2, 2);
-        button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        button.setPadding(2, 10, 2, 10);
+        button.setBackground(buttonBg());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.setMargins(2, 2, 2, 2);
+        button.setLayoutParams(lp);
         return button;
+    }
+
+    private GradientDrawable buttonBg() {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(0xFF07131F);
+        g.setStroke(1, 0xFF22E6F2);
+        g.setCornerRadius(10f);
+        return g;
+    }
+
+    private GradientDrawable panelBg() {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(0xFF07131F);
+        g.setStroke(1, 0xFF22E6F2);
+        g.setCornerRadius(12f);
+        return g;
     }
 
     private void pickImage() {
@@ -132,7 +164,7 @@ public final class MainActivity extends Activity {
 
     private void togglePreviewMode() {
         String mode = previewView.togglePreviewMode();
-        status.setText("Вид: " + mode + " | Analyze покажет overlay, View переключает режимы.");
+        status.setText("Вид: " + mode + "\nРежимы: исходник → анализ → маршрут → контуры → холст.");
         RuntimeLog.line("preview_mode", mode);
     }
 
@@ -154,7 +186,7 @@ public final class MainActivity extends Activity {
                 lastIntent = null;
                 lastReconstructionSummary = "метрик реконструкции пока нет";
                 previewView.setPlan(null);
-                status.setText("Картинка загружена: " + lastImageInfo.summary() + " | нажми Analyze или Fast/Natural");
+                status.setText("Картинка загружена\n" + lastImageInfo.summary() + "\nНажми Анализ или Вид.");
             } catch (Exception e) {
                 CrashLogger.logHandledError("image_import", e);
                 RuntimeLog.error("image_import", e);
@@ -200,7 +232,7 @@ public final class MainActivity extends Activity {
         if (sourceImage == null) { status.setText("Сначала импортируй картинку."); return; }
         if (backgroundBusy) { status.setText("Занято. Дождись конца анализа или benchmark."); return; }
         backgroundBusy = true;
-        status.setText("Analyze: строю overlay, проверяю ложный UI/Text...");
+        status.setText("Анализ: строю признаки, overlay и отчёт...");
         RuntimeLog.line("analyze_visual", "start");
         new Thread(() -> {
             try {
@@ -238,7 +270,7 @@ public final class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 AnalyzerBenchmark.Result result = AnalyzerBenchmark.run(this, new AnalyzerBenchmark.Progress() {
-                    @Override public void onStart(String datasetPath, int total, int labelsFound) { runOnUiThread(() -> status.setText("Bench dataset: " + datasetPath + " | картинок=" + total + " | меток=" + labelsFound)); }
+                    @Override public void onStart(String datasetPath, int total, int labelsFound) { runOnUiThread(() -> status.setText("Bench dataset: " + datasetPath + "\nкартинок=" + total + " | меток=" + labelsFound)); }
                     @Override public void onItem(int index, int total, String name, int top1, int top3, int missingLabels) { if (index == 1 || index == total || index % 5 == 0) runOnUiThread(() -> status.setText("Bench " + index + "/" + total + " | top1=" + top1 + " | top3=" + top3 + " | без меток=" + missingLabels + "\n" + name)); }
                 });
                 String text = "Bench готов: " + result.images + " картинок, меток=" + result.labelsFound + ", top1=" + pct(result.top1, result.labelsFound) + ", top3=" + pct(result.top3, result.labelsFound) + ", ошибок=" + result.errors + "\nZIP: " + result.zipPath;
@@ -253,11 +285,11 @@ public final class MainActivity extends Activity {
     }
 
     private void showImageInfo() {
-        if (lastImageInfo == null) { status.setText("Нет картинки. Для Bench основной путь: /storage/emulated/0/Download/" + AnalyzerBenchmark.DATASET_DIR); return; }
+        if (lastImageInfo == null) { status.setText("Нет картинки. Для Bench путь: /storage/emulated/0/Download/" + AnalyzerBenchmark.DATASET_DIR); return; }
         String planInfo = currentPlan == null ? "план ещё не построен" : "действий=" + currentPlan.actions.size();
         String analysisInfo = lastAnalysis == null ? "анализа ещё нет" : russianAnalysisSummary(lastAnalysis, lastIntent, "");
         Rect rect = previewView.currentImageRect();
-        status.setText(lastImageInfo.summary() + " | preview=" + rect.width() + "x" + rect.height() + " | вид=" + previewView.previewModeName() + "\n" + analysisInfo + "\n" + planInfo + " | " + lastReconstructionSummary);
+        status.setText(lastImageInfo.summary() + "\npreview=" + rect.width() + "x" + rect.height() + " | вид=" + previewView.previewModeName() + "\n" + analysisInfo + "\n" + planInfo + " | " + lastReconstructionSummary);
     }
 
     private void buildPlan(DrawMode mode) {
@@ -303,7 +335,7 @@ public final class MainActivity extends Activity {
     private void exportPlan() {
         if (currentPlan == null) { status.setText("Сначала построй план Fast или Natural."); return; }
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch18.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch24.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
@@ -325,7 +357,7 @@ public final class MainActivity extends Activity {
         return b.toString();
     }
 
-    private static String ruGenre(String g) { if (g == null) return "неизвестно"; if (g.contains("landscape")) return "пейзаж / окружение"; if (g.contains("painting") || g.contains("concept")) return "цифровой арт / концепт"; if (g.contains("ui")) return "интерфейс / UI"; if (g.contains("anime")) return "аниме / мульт"; if (g.contains("portrait")) return "портрет / персонаж"; if (g.contains("logo")) return "логотип / символ"; if (g.contains("sketch")) return "скетч / линии"; if (g.contains("vector")) return "плоский вектор"; if (g.contains("photo")) return "фото"; return g; }
+    private static String ruGenre(String g) { if (g == null) return "неизвестно"; if (g.contains("landscape")) return "пейзаж / окружение"; if (g.contains("architecture")) return "архитектура"; if (g.contains("painting") || g.contains("concept")) return "цифровой арт / концепт"; if (g.contains("ui")) return "интерфейс / UI"; if (g.contains("anime")) return "аниме / мульт"; if (g.contains("portrait")) return "портрет / персонаж"; if (g.contains("logo")) return "логотип / символ"; if (g.contains("sketch")) return "скетч / линии"; if (g.contains("vector")) return "плоский вектор"; if (g.contains("photo")) return "фото"; return g; }
     private static String ruIntent(String i) { if (i == null) return "обычный послойный рисунок"; if (i.contains("character")) return "сначала силуэт персонажа"; if (i.contains("portrait")) return "сначала масса лица и головы"; if (i.contains("scene")) return "сначала фон и большие формы сцены"; if (i.contains("ui")) return "сначала layout интерфейса"; if (i.contains("logo")) return "сначала главная форма символа"; if (i.contains("lineart")) return "сначала контуры"; if (i.contains("flat")) return "сначала большие плоские цвета"; return i; }
     private static String ruStrategy(String genre, DrawingIntentAnalysis intent) { if (genre.contains("landscape") || genre.contains("painting") || genre.contains("concept")) return "фон -> большие массы -> свет/тень -> главный объект -> детали"; if (intent != null) { String i = intent.primaryIntent; if (i.contains("character")) return "фон -> силуэт -> волосы/одежда -> лицо -> детали"; if (i.contains("portrait")) return "фон -> голова/кожа -> волосы -> глаза/нос/рот -> тени"; if (i.contains("scene")) return "фон -> большие массы -> свет/тень -> главные объекты -> мелкие детали"; if (i.contains("ui")) return "фон -> панели -> кнопки -> иконки -> текст"; if (i.contains("logo")) return "фон -> главный символ -> вырезы -> чёткие края -> блики"; } return "фон -> крупные формы -> контуры -> тени -> блики -> детали"; }
     private static String shorten(String s, int max) { return s.length() <= max ? s : s.substring(0, max) + "..."; }
