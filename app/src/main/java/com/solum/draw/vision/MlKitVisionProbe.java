@@ -111,4 +111,13 @@ public final class MlKitVisionProbe {
     private static float clamp(float v) {
         return Math.max(0f, Math.min(1f, v));
     }
+    private static String solumDatasetRoute27E(Object labels, Object objects, String extra) {
+        try {
+            DatasetClassRouter.Route route = DatasetClassRouter.route(labels, objects, extra);
+            return route.summary + "\nПричины: " + route.reason;
+        } catch (Throwable t) {
+            return "dataset_class: unknown | router error: " + t.getClass().getSimpleName();
+        }
+    }
+
 }
