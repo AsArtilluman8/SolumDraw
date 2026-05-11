@@ -99,7 +99,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
                 if (ok3) top3++;
                 items.add(new ItemResult(img.relativeName, img.expected, img.secondary, analysis, oldPredicted, predicted, decision.topLine, decision.reason, ml.provider, note, candidates, ok1, ok3, hasExpected));
             } catch (Exception e) {
-                errors.add(img.relativeName + ": " + e.getMessage());
+                errors.add(img.relativeName + "\t" + e.getClass().getSimpleName() + "\t" + String.valueOf(e.getMessage()));
             }
             if (progress != null) progress.onItem(i + 1, images.size(), img.relativeName, top1, top3, missingLabels);
         }
@@ -112,6 +112,8 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         writeText(new File(outDir, "BENCHMARK_REPORT.md"), reportMd(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
         writeText(new File(outDir, "summary.txt"), reportMd(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
         writeText(new File(outDir, "errors.txt"), errorsText(errors));
+        writeText(new File(outDir, "axis_report.md"), axisReportMd(items));
+        writeText(new File(outDir, "axis_report.csv"), axisReportCsv(items));
 
         File zip = new File(downloads, outDir.getName() + ".zip");
         zipDir(outDir, zip);
@@ -248,6 +250,171 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
     }
 
     private static void inc(Map<String,Integer> map, String key) { Integer v = map.get(key); map.put(key, v == null ? 1 : v + 1); }
+
+    private static String axisReportMd(List<ItemResult> items) {
+        AxisStats st = buildAxisStats(items);
+        StringBuilder b = new StringBuilder();
+        b.append("# SolumDraw Multi-axis Benchmark\n\n");
+        b.append("Strict top1 = папка dataset точно совпала с predicted.\n");
+        b.append("Axis top1 = совпал тип задачи: style/content/ui/architecture/scene/etc.\n\n");
+        b.append("- Items: ").append(st.total).append("\n");
+        b.append("- Strict top1: ").append(st.strictTop1).append(" / ").append(st.total).append(" = ").append(pctText(st.strictTop1, st.total)).append("\n");
+        b.append("- Axis top1: ").append(st.axisTop1).append(" / ").append(st.total).append(" = ").append(pctText(st.axisTop1, st.total)).append("\n");
+        b.append("- Off-axis: ").append(st.offAxis).append("\n\n");
+
+        b.append("## By true axis\n\n");
+        for (Map.Entry<String,Integer> e : sorted(st.axisTotal)) {
+            String axis = e.getKey();
+            int total = e.getValue();
+            int ok = get(st.axisCorrect, axis);
+            b.append("- ").append(axis).append(": ").append(ok).append("/").append(total)
+                    .append(" = ").append(pctText(ok, total)).append("\n");
+        }
+
+        b.append("\n## Frequent axis confusions\n\n");
+        for (Map.Entry<String,Integer> e : sorted(st.axisConfusions)) {
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+        }
+
+        b.append("\n## Meaning\n\n");
+        b.append("Если strict низкий, но axis выше — анализатор часто понимает общий тип картинки, но не угадывает точную папку dataset.\n");
+        b.append("Если и axis низкий — проблема в правилах/ML/fallback для этой группы.\n");
+        return b.toString();
+    }
+
+    private static String axisReportCsv(List<ItemResult> items) {
+        StringBuilder b = new StringBuilder();
+        b.append("file,true_class,true_axis,predicted,predicted_axis,strict_ok,axis_ok,top3,raw_predicted,confidence,note\n");
+        for (ItemResult it : items) {
+            String trueAxis = axisOf(it.expected);
+            String predAxis = axisOf(it.predicted);
+            boolean strict = it.hasExpected && it.expected.equals(it.predicted);
+            boolean axisOk = it.hasExpected && trueAxis.equals(predAxis);
+            b.append(csv(it.name)).append(',')
+                    .append(csv(it.expected)).append(',')
+                    .append(csv(trueAxis)).append(',')
+                    .append(csv(it.predicted)).append(',')
+                    .append(csv(predAxis)).append(',')
+                    .append(strict).append(',')
+                    .append(axisOk).append(',')
+                    .append(csv(join(it.top3))).append(',')
+                    .append(csv(it.analysis.genre)).append(',')
+                    .append(num(it.analysis.confidence)).append(',')
+                    .append(csv(it.note)).append('\n');
+        }
+        return b.toString();
+    }
+
+    private static AxisStats buildAxisStats(List<ItemResult> items) {
+        AxisStats st = new AxisStats();
+        st.total = items.size();
+        for (ItemResult it : items) {
+            if (!it.hasExpected) continue;
+            String trueAxis = axisOf(it.expected);
+            String predAxis = axisOf(it.predicted);
+            inc(st.axisTotal, trueAxis);
+
+            boolean strict = it.expected.equals(it.predicted);
+            boolean axisOk = trueAxis.equals(predAxis);
+
+            if (strict) st.strictTop1++;
+            if (axisOk) {
+                st.axisTop1++;
+                inc(st.axisCorrect, trueAxis);
+            } else {
+                st.offAxis++;
+                inc(st.axisConfusions, trueAxis + " -> " + predAxis);
+            }
+        }
+        return st;
+    }
+
+    private static String axisOf(String cls) {
+        if (cls == null) return "unknown";
+        String c = cls.toLowerCase(Locale.US);
+
+        if (c.contains("watercolor") || c.contains("oil_painting") || c.contains("ink_wash") ||
+                c.contains("grayscale_ink") || c.contains("low_poly") || c.contains("pixel_art") ||
+                c.contains("retro_halftone") || c.contains("abstract_art") || c.contains("digital_painting") ||
+                c.contains("cartoon") || c.contains("anime") || c.contains("lineart") || c.contains("vector_flat")) {
+            return "style_art";
+        }
+
+        if (c.contains("portrait") || c.contains("character") || c.contains("human_body") ||
+                c.contains("fashion") || c.contains("clothing")) {
+            return "character_body";
+        }
+
+        if (c.contains("animal") || c.contains("creature")) {
+            return "animal_creature";
+        }
+
+        if (c.contains("architecture") || c.contains("building") || c.contains("hardsurface") ||
+                c.contains("isometric")) {
+            return "architecture_object";
+        }
+
+        if (c.contains("landscape") || c.contains("environment") || c.contains("space_scifi") ||
+                c.contains("plant") || c.contains("flower")) {
+            return "scene_environment";
+        }
+
+        if (c.contains("ui") || c.contains("hud") || c.contains("screenshot") ||
+                c.contains("diagram") || c.contains("chart") || c.contains("logo") ||
+                c.contains("icon") || c.contains("text_document")) {
+            return "ui_document";
+        }
+
+        if (c.contains("pattern") || c.contains("texture") || c.contains("seamless") ||
+                c.contains("transparent_layered")) {
+            return "texture_pattern";
+        }
+
+        if (c.contains("vfx") || c.contains("glow") || c.contains("magic")) {
+            return "vfx_fx";
+        }
+
+        if (c.contains("vehicle")) {
+            return "vehicle";
+        }
+
+        if (c.contains("noisy") || c.contains("compressed")) {
+            return "quality_noise";
+        }
+
+        if (c.contains("product") || c.contains("object")) {
+            return "generic_object";
+        }
+
+        return "unknown";
+    }
+private static int get(Map<String,Integer> m, String k) {
+        Integer v = m.get(k);
+        return v == null ? 0 : v;
+    }
+
+    private static String pctText(int a, int b) {
+        if (b <= 0) return "0%";
+        return Math.round((a * 1000f) / b) / 10f + "%";
+    }
+
+    private static List<Map.Entry<String,Integer>> sorted(Map<String,Integer> m) {
+        List<Map.Entry<String,Integer>> e = new ArrayList<>(m.entrySet());
+        Collections.sort(e, new Comparator<Map.Entry<String,Integer>>() {
+            @Override public int compare(Map.Entry<String,Integer> a, Map.Entry<String,Integer> b) {
+                return b.getValue().compareTo(a.getValue());
+            }
+        });
+        return e;
+    }
+
+    private static final class AxisStats {
+        int total, strictTop1, axisTop1, offAxis;
+        final Map<String,Integer> axisTotal = new HashMap<>();
+        final Map<String,Integer> axisCorrect = new HashMap<>();
+        final Map<String,Integer> axisConfusions = new HashMap<>();
+    }
+
     private static String errorsText(List<String> errors) {
         StringBuilder b = new StringBuilder();
         b.append("errors=").append(errors.size()).append("\n");
