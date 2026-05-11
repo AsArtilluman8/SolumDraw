@@ -140,21 +140,114 @@ public final class StrokePreviewView extends View {
     private void drawContours(Canvas canvas, Rect dst) {
         ensureVision();
         if (vision == null) return;
-        drawRegionBoxes(canvas, dst, true);
+
+        // Contour mode is now sketch-first:
+        // no route bubbles here, no huge region fills, no mask-rectangle fan.
+        drawEdgeSketchSegments(canvas, dst, true);
+        drawEdgeSketchSegments(canvas, dst, false);
+        drawCompactRegionHints(canvas, dst);
+    }
+
+    private void drawEdgeSketchSegments(Canvas canvas, Rect dst, boolean glow) {
+        if (vision == null || vision.gridWidth <= 2 || vision.gridHeight <= 2 || vision.edge == null) return;
+
         int gw = vision.gridWidth;
         int gh = vision.gridHeight;
-        float cw = dst.width() / (float)Math.max(1, gw);
-        float ch = dst.height() / (float)Math.max(1, gh);
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(220, 34, 230, 242));
-        float dot = Math.max(1.0f, Math.min(cw, ch) * 0.36f);
+        float sx = dst.width() / (float) gw;
+        float sy = dst.height() / (float) gh;
+
+        Path path = new Path();
+        int drawn = 0;
+        int maxSegments = glow ? 4200 : 5200;
+
         for (int y = 1; y < gh - 1; y++) {
             for (int x = 1; x < gw - 1; x++) {
-                if (!vision.isBoundary(x, y)) continue;
-                float px = dst.left + (x + .5f) * cw;
-                float py = dst.top + (y + .5f) * ch;
-                canvas.drawCircle(px, py, dot, paint);
+                int id = y * gw + x;
+                if (!vision.edge[id]) continue;
+
+                int n = 0;
+                if (vision.edge[id - 1]) n++;
+                if (vision.edge[id + 1]) n++;
+                if (vision.edge[id - gw]) n++;
+                if (vision.edge[id + gw]) n++;
+                if (vision.edge[id - gw - 1]) n++;
+                if (vision.edge[id - gw + 1]) n++;
+                if (vision.edge[id + gw - 1]) n++;
+                if (vision.edge[id + gw + 1]) n++;
+
+                // Remove isolated sensor/noise dots.
+                if (n < 2) continue;
+
+                float cx = dst.left + (x + 0.5f) * sx;
+                float cy = dst.top + (y + 0.5f) * sy;
+
+                boolean horizontal = vision.edge[id - 1] || vision.edge[id + 1];
+                boolean vertical = vision.edge[id - gw] || vision.edge[id + gw];
+                boolean diagA = vision.edge[id - gw - 1] || vision.edge[id + gw + 1];
+                boolean diagB = vision.edge[id - gw + 1] || vision.edge[id + gw - 1];
+
+                if (horizontal && drawn < maxSegments) {
+                    path.moveTo(cx - sx * 0.55f, cy);
+                    path.lineTo(cx + sx * 0.55f, cy);
+                    drawn++;
+                }
+                if (vertical && drawn < maxSegments) {
+                    path.moveTo(cx, cy - sy * 0.55f);
+                    path.lineTo(cx, cy + sy * 0.55f);
+                    drawn++;
+                }
+                if (!horizontal && !vertical && diagA && drawn < maxSegments) {
+                    path.moveTo(cx - sx * 0.45f, cy - sy * 0.45f);
+                    path.lineTo(cx + sx * 0.45f, cy + sy * 0.45f);
+                    drawn++;
+                }
+                if (!horizontal && !vertical && diagB && drawn < maxSegments) {
+                    path.moveTo(cx + sx * 0.45f, cy - sy * 0.45f);
+                    path.lineTo(cx - sx * 0.45f, cy + sy * 0.45f);
+                    drawn++;
+                }
+
+                if (drawn >= maxSegments) break;
             }
+            if (drawn >= maxSegments) break;
+        }
+
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND);
+
+        if (glow) {
+            paint.setStrokeWidth(4.6f);
+            paint.setColor(Color.argb(34, 34, 230, 242));
+        } else {
+            paint.setStrokeWidth(1.55f);
+            paint.setColor(Color.argb(220, 34, 230, 242));
+        }
+
+        canvas.drawPath(path, paint);
+    }
+
+    private void drawCompactRegionHints(Canvas canvas, Rect dst) {
+        if (vision == null) return;
+
+        RectF df = new RectF(dst);
+        int idx = 0;
+
+        for (VisionRegionMap.Region r : vision.displayRegions()) {
+            RectF rr = r.rectIn(df);
+
+            // Ignore giant background islands and tiny false positives.
+            float cover = (rr.width() * rr.height()) / Math.max(1f, dst.width() * dst.height());
+            if (cover > 0.52f) continue;
+            if (rr.width() < 18 || rr.height() < 18) continue;
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(idx == 0 ? 1.8f : 1.1f);
+            paint.setColor(idx == 0 ? Color.argb(145, 255, 196, 72) : Color.argb(90, 155, 107, 255));
+            canvas.drawRoundRect(rr, 10f, 10f, paint);
+
+            idx++;
+            if (idx >= 5) break;
         }
     }
 
