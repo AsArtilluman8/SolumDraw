@@ -149,7 +149,7 @@ public final class StrokePreviewView extends View {
             RectF rr = r.rectIn(df);
             if (rr.width() < 12 || rr.height() < 12) continue;
 
-            int alpha = idx == 0 ? 72 : 42;
+            int alpha = idx == 0 ? 34 : 22;
             int color;
             switch (idx % 6) {
                 case 0: color = Color.argb(alpha, 34, 230, 242); break;
@@ -164,32 +164,73 @@ public final class StrokePreviewView extends View {
             canvas.drawRoundRect(rr, 10f, 10f, paint);
 
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(idx == 0 ? 2.6f : 1.5f);
-            paint.setColor(idx == 0 ? Color.argb(235, 34, 230, 242) : Color.argb(150, 230, 240, 255));
+            paint.setStrokeWidth(idx == 0 ? 2.0f : 1.2f);
+            paint.setColor(idx == 0 ? Color.argb(170, 34, 230, 242) : Color.argb(105, 230, 240, 255));
             canvas.drawRoundRect(rr, 10f, 10f, paint);
             paint.setStyle(Paint.Style.FILL);
 
             idx++;
-            if (idx >= 10) break;
+            if (idx >= 8) break;
+        }
+
+        drawLocalContourSegments(canvas, dst, true);
+        drawLocalContourSegments(canvas, dst, false);
+
+        drawRoute(canvas, dst);
+    }
+
+    private void drawLocalContourSegments(Canvas canvas, Rect dst, boolean glow) {
+        if (vision == null || vision.gridWidth <= 1 || vision.gridHeight <= 1) return;
+
+        int gw = vision.gridWidth;
+        int gh = vision.gridHeight;
+        float sx = dst.width() / (float) gw;
+        float sy = dst.height() / (float) gh;
+
+        Path path = new Path();
+
+        for (int y = 1; y < gh - 1; y++) {
+            for (int x = 1; x < gw - 1; x++) {
+                int id = y * gw + x;
+                if (!vision.subjectMask[id]) continue;
+
+                float x0 = dst.left + x * sx;
+                float y0 = dst.top + y * sy;
+                float x1 = x0 + sx;
+                float y1 = y0 + sy;
+
+                if (!vision.subjectMask[id - 1]) {
+                    path.moveTo(x0, y0);
+                    path.lineTo(x0, y1);
+                }
+                if (!vision.subjectMask[id + 1]) {
+                    path.moveTo(x1, y0);
+                    path.lineTo(x1, y1);
+                }
+                if (!vision.subjectMask[id - gw]) {
+                    path.moveTo(x0, y0);
+                    path.lineTo(x1, y0);
+                }
+                if (!vision.subjectMask[id + gw]) {
+                    path.moveTo(x0, y1);
+                    path.lineTo(x1, y1);
+                }
+            }
         }
 
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
-        paint.setStrokeWidth(2.2f);
-        paint.setColor(Color.argb(240, 34, 230, 242));
 
-        for (float[] line : vision.contourPolylines()) {
-            if (line.length < 4) continue;
-            Path path = new Path();
-            path.moveTo(dst.left + line[0] * dst.width(), dst.top + line[1] * dst.height());
-            for (int i = 2; i < line.length - 1; i += 2) {
-                path.lineTo(dst.left + line[i] * dst.width(), dst.top + line[i + 1] * dst.height());
-            }
-            canvas.drawPath(path, paint);
+        if (glow) {
+            paint.setStrokeWidth(5.0f);
+            paint.setColor(Color.argb(58, 34, 230, 242));
+        } else {
+            paint.setStrokeWidth(2.0f);
+            paint.setColor(Color.argb(235, 34, 230, 242));
         }
 
-        drawRoute(canvas, dst);
+        canvas.drawPath(path, paint);
     }
 
     private void drawRegionBoxes(Canvas canvas, Rect dst, boolean strong) {
