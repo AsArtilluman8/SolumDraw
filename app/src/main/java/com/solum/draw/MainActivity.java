@@ -97,6 +97,7 @@ public final class MainActivity extends Activity {
         Button infoButton = button("Инфо");
         Button canvasButton = button("Вид");
         Button benchButton = button("Bench");
+        Button quickBenchButton = button("QuickBench");
         Button fastButton = button("Быстро");
         Button naturalButton = button("Натур.");
         Button exportButton = button("Экспорт");
@@ -107,6 +108,7 @@ public final class MainActivity extends Activity {
         topBar.addView(infoButton);
         topBar.addView(canvasButton);
         topBar.addView(benchButton);
+        topBar.addView(quickBenchButton);
         drawBar.addView(fastButton);
         drawBar.addView(naturalButton);
         drawBar.addView(exportButton);
@@ -125,6 +127,7 @@ public final class MainActivity extends Activity {
         infoButton.setOnClickListener(v -> showImageInfo());
         canvasButton.setOnClickListener(v -> togglePreviewMode());
         benchButton.setOnClickListener(v -> runAnalyzerBenchmarkWithPermission());
+        quickBenchButton.setOnClickListener(v -> runAnalyzerQuickBenchmarkWithPermission());
         fastButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_FAST));
         naturalButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_NATURAL));
         exportButton.setOnClickListener(v -> exportPlan());
@@ -225,6 +228,15 @@ public final class MainActivity extends Activity {
         return null;
     }
 
+    private void runAnalyzerQuickBenchmarkWithPermission() {
+        if (!hasBenchImagePermission()) {
+            runAnalyzerBenchmarkWithPermission();
+            status.setText("QuickBench нужен доступ к картинкам. Подтверди разрешение, потом нажми QuickBench ещё раз.");
+            return;
+        }
+        runAnalyzerQuickBenchmark();
+    }
+
     private void runAnalyzerBenchmarkWithPermission() {
         if (!hasBenchImagePermission()) {
             String permission = benchPermissionName();
@@ -320,6 +332,35 @@ public final class MainActivity extends Activity {
             } finally { backgroundBusy = false; }
         }).start();
     }
+
+    private void runAnalyzerQuickBenchmark() {
+        status.setText("QuickBench: проверяю первые 30 картинок dataset...");
+        new Thread(() -> {
+            try {
+                AnalyzerBenchmark.Result result = AnalyzerBenchmark.runQuick(this, new AnalyzerBenchmark.Progress() {
+                    @Override public void onStart(String datasetPath, int total, int labelsFound) {
+                        runOnUiThread(() -> status.setText("QuickBench dataset: " + datasetPath + "\nкартинок=" + total + " | меток=" + labelsFound));
+                    }
+
+                    @Override public void onItem(int index, int total, String name, int top1, int top3, int missingLabels) {
+                        if (index == 1 || index == total || index % 5 == 0) {
+                            runOnUiThread(() -> status.setText("QuickBench " + index + "/" + total + " | top1=" + top1 + " | top3=" + top3 + " | без меток=" + missingLabels + "\n" + name));
+                        }
+                    }
+                });
+
+                String text = "QuickBench готов: " + result.images + " картинок, меток=" + result.labelsFound
+                        + ", top1=" + pct(result.top1, result.labelsFound)
+                        + ", top3=" + pct(result.top3, result.labelsFound)
+                        + ", ошибок=" + result.errors
+                        + "\nZIP: " + result.zipPath;
+                runOnUiThread(() -> status.setText(text));
+            } catch (Exception e) {
+                runOnUiThread(() -> status.setText("QuickBench не удался: " + e.getMessage()));
+            }
+        }).start();
+    }
+
 
     private void showImageInfo() {
         if (lastImageInfo == null) { status.setText("Нет картинки. Для Bench путь: /storage/emulated/0/Download/" + AnalyzerBenchmark.DATASET_DIR); return; }

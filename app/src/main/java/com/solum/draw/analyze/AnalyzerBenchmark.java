@@ -111,6 +111,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         writeText(new File(outDir, "benchmark_summary.json"), summaryJson(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
         writeText(new File(outDir, "BENCHMARK_REPORT.md"), reportMd(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
         writeText(new File(outDir, "summary.txt"), reportMd(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
+        writeText(new File(outDir, "errors.txt"), errorsText(errors));
 
         File zip = new File(downloads, outDir.getName() + ".zip");
         zipDir(outDir, zip);
@@ -247,6 +248,13 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
     }
 
     private static void inc(Map<String,Integer> map, String key) { Integer v = map.get(key); map.put(key, v == null ? 1 : v + 1); }
+    private static String errorsText(List<String> errors) {
+        StringBuilder b = new StringBuilder();
+        b.append("errors=").append(errors.size()).append("\n");
+        for (String e : errors) b.append(e).append("\n");
+        return b.toString();
+    }
+
     private static String readText(File f) { try { BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8")); StringBuilder b = new StringBuilder(); String line; while ((line = r.readLine()) != null) b.append(line).append('\n'); r.close(); return b.toString(); } catch (Exception e) { return ""; } }
     private static String jsonString(String json, String key) { String q = "\"" + key + "\""; int i = json.indexOf(q); if (i < 0) return ""; int c = json.indexOf(':', i); if (c < 0) return ""; int a = json.indexOf('"', c + 1); if (a < 0) return ""; int b = json.indexOf('"', a + 1); if (b < 0) return ""; return json.substring(a + 1, b); }
     private static String jsonArrayInline(String json, String key) { String q = "\"" + key + "\""; int i = json.indexOf(q); if (i < 0) return ""; int a = json.indexOf('[', i); int b = json.indexOf(']', a); if (a < 0 || b < 0) return ""; return json.substring(a + 1, b).replace("\"", "").replace("\n", " ").trim(); }
