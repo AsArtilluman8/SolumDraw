@@ -328,7 +328,7 @@ public final class MainActivity extends Activity {
 
     private StrokeAction scaleStroke(StrokeAction action, float sx, float sy) {
         java.util.ArrayList<android.graphics.PointF> scaled = new java.util.ArrayList<>();
-        for (android.graphics.PointF p : action.path) scaled.add(new java.util.ArrayList<android.graphics.PointF>().isEmpty() ? new android.graphics.PointF(p.x * sx, p.y * sy) : null);
+        for (android.graphics.PointF p : action.path) scaled.add(new android.graphics.PointF(p.x * sx, p.y * sy));
         return new StrokeAction(action.stage, action.color, Math.max(1f, action.size * Math.max(sx, sy)), scaled);
     }
 
