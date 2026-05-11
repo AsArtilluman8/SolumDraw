@@ -102,12 +102,12 @@ public final class StrokePreviewView extends View {
             canvas.drawRect(dst, paint);
             return;
         }
-        paint.setAlpha(previewMode == MODE_CONTOUR ? 82 : 200);
+        paint.setAlpha(previewMode == MODE_CONTOUR ? 96 : 200);
         canvas.drawBitmap(sourceImage, null, dst, paint);
         paint.setAlpha(255);
         if (previewMode == MODE_CONTOUR) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(126, 0, 0, 0));
+            paint.setColor(Color.argb(118, 0, 0, 0));
             canvas.drawRect(dst, paint);
         }
     }
@@ -139,7 +139,7 @@ public final class StrokePreviewView extends View {
         if (sourceImage == null || dst.width() < 8 || dst.height() < 8) return;
         if (regionMap == null) regionMap = VisionRegionMap.analyze(sourceImage);
         drawRegionBoxes(canvas, dst, true);
-        drawEdgeCells(canvas, dst);
+        drawEdgeOutline(canvas, dst);
     }
 
     private void drawRegionBoxes(Canvas canvas, Rect dst, boolean strong) {
@@ -151,35 +151,37 @@ public final class StrokePreviewView extends View {
             RectF rr = r.rectIn(dstF);
             if (rr.width() < 12 || rr.height() < 12) continue;
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(strong ? 4.0f : 2.2f);
-            paint.setColor(count == 0 ? Color.rgb(34, 230, 242) : Color.argb(strong ? 210 : 120, 155, 107, 255));
+            paint.setStrokeWidth(strong ? 2.4f : 1.6f);
+            paint.setColor(count == 0 ? Color.argb(strong ? 210 : 120, 34, 230, 242) : Color.argb(strong ? 135 : 80, 155, 107, 255));
             canvas.drawRoundRect(rr, 12f, 12f, paint);
-            if (strong && count < 5) {
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.argb(190, 6, 14, 22));
-                canvas.drawRoundRect(new RectF(rr.left, rr.top, Math.min(rr.left + 92, rr.right), rr.top + 28), 8f, 8f, paint);
-                paint.setColor(Color.WHITE);
-                paint.setTextSize(16f);
-                canvas.drawText("область " + (count + 1), rr.left + 8, rr.top + 20, paint);
-            }
             count++;
         }
     }
 
-    private void drawEdgeCells(Canvas canvas, Rect dst) {
+    private void drawEdgeOutline(Canvas canvas, Rect dst) {
         int gw = regionMap.gridWidth;
         int gh = regionMap.gridHeight;
         float cw = dst.width() / (float)Math.max(1, gw);
         float ch = dst.height() / (float)Math.max(1, gh);
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.rgb(34, 230, 242));
-        int skip = Math.max(1, Math.min(gw, gh) / 96);
-        for (int y = 1; y < gh - 1; y += skip) {
-            for (int x = 1; x < gw - 1; x += skip) {
+        paint.setColor(Color.argb(220, 34, 230, 242));
+        float dot = Math.max(1.1f, Math.min(cw, ch) * 0.42f);
+        for (int y = 1; y < gh - 1; y++) {
+            for (int x = 1; x < gw - 1; x++) {
                 if (!regionMap.isEdgeCell(x, y)) continue;
-                float px = dst.left + x * cw;
-                float py = dst.top + y * ch;
-                canvas.drawRect(px, py, px + Math.max(1.2f, cw * 0.8f), py + Math.max(1.2f, ch * 0.8f), paint);
+                int neighbors = 0;
+                if (regionMap.isEdgeCell(x + 1, y)) neighbors++;
+                if (regionMap.isEdgeCell(x - 1, y)) neighbors++;
+                if (regionMap.isEdgeCell(x, y + 1)) neighbors++;
+                if (regionMap.isEdgeCell(x, y - 1)) neighbors++;
+                if (regionMap.isEdgeCell(x + 1, y + 1)) neighbors++;
+                if (regionMap.isEdgeCell(x - 1, y - 1)) neighbors++;
+                if (regionMap.isEdgeCell(x + 1, y - 1)) neighbors++;
+                if (regionMap.isEdgeCell(x - 1, y + 1)) neighbors++;
+                if (neighbors >= 7) continue;
+                float px = dst.left + (x + 0.5f) * cw;
+                float py = dst.top + (y + 0.5f) * ch;
+                canvas.drawCircle(px, py, dot, paint);
             }
         }
     }
