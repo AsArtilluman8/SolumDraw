@@ -34,6 +34,8 @@ import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
 import com.solum.draw.planner.StrokePlanJson;
 import com.solum.draw.preview.StrokePreviewView;
+import com.solum.draw.vision.MlKitVisionProbe;
+import com.solum.draw.vision.VisionResult;
 import com.solum.draw.reconstruct.ErrorMap;
 import com.solum.draw.reconstruct.ReconstructionMetrics;
 import com.solum.draw.reconstruct.ResidualPlanner;
@@ -53,6 +55,7 @@ public final class MainActivity extends Activity {
     private SafeBitmapLoader.Result lastImageInfo;
     private ImageAnalysis lastAnalysis;
     private DrawingIntentAnalysis lastIntent;
+    private VisionResult lastMlVisionResult;
     private StrokePlan currentPlan;
     private String lastReconstructionSummary = "метрик реконструкции пока нет";
     private volatile boolean backgroundBusy = false;
@@ -90,6 +93,7 @@ public final class MainActivity extends Activity {
 
         Button importButton = button("Импорт");
         Button analyzeButton = button("Анализ");
+        Button mlButton = button("ML");
         Button infoButton = button("Инфо");
         Button canvasButton = button("Вид");
         Button benchButton = button("Bench");
@@ -99,6 +103,7 @@ public final class MainActivity extends Activity {
 
         topBar.addView(importButton);
         topBar.addView(analyzeButton);
+        topBar.addView(mlButton);
         topBar.addView(infoButton);
         topBar.addView(canvasButton);
         topBar.addView(benchButton);
@@ -116,6 +121,7 @@ public final class MainActivity extends Activity {
 
         importButton.setOnClickListener(v -> pickImage());
         analyzeButton.setOnClickListener(v -> analyzeCurrentImageVisual());
+        mlButton.setOnClickListener(v -> runMlKitProbe());
         infoButton.setOnClickListener(v -> showImageInfo());
         canvasButton.setOnClickListener(v -> togglePreviewMode());
         benchButton.setOnClickListener(v -> runAnalyzerBenchmarkWithPermission());
@@ -184,6 +190,8 @@ public final class MainActivity extends Activity {
                 currentPlan = null;
                 lastAnalysis = null;
                 lastIntent = null;
+                lastMlVisionResult = null;
+                previewView.setMlVisionResult(null);
                 lastReconstructionSummary = "метрик реконструкции пока нет";
                 previewView.setPlan(null);
                 status.setText("Картинка загружена\n" + lastImageInfo.summary() + "\nНажми Анализ или Вид.");
@@ -226,6 +234,35 @@ public final class MainActivity extends Activity {
             return;
         }
         runAnalyzerBenchmark();
+    }
+
+
+    private void runMlKitProbe() {
+        if (sourceImage == null) { status.setText("Сначала импортируй картинку."); return; }
+        if (backgroundBusy) { status.setText("Занято. Дождись конца анализа."); return; }
+
+        backgroundBusy = true;
+        status.setText("ML Kit: ищу labels и объекты на картинке...");
+        RuntimeLog.line("mlkit_probe", "start");
+
+        MlKitVisionProbe.analyze(sourceImage, new MlKitVisionProbe.Callback() {
+            @Override public void onResult(VisionResult result) {
+                lastMlVisionResult = result;
+                RuntimeLog.line("mlkit_probe", result.summaryRu());
+                runOnUiThread(() -> {
+                    previewView.setMlVisionResult(result);
+                    status.setText(result.summaryRu() + "\nЕсли bbox пустые: модель могла ещё догружаться, попробуй ML ещё раз через минуту.");
+                });
+                backgroundBusy = false;
+            }
+
+            @Override public void onError(Exception error) {
+                CrashLogger.logHandledError("mlkit_probe", error);
+                RuntimeLog.error("mlkit_probe", error);
+                runOnUiThread(() -> status.setText("ML Kit недоступен: " + error.getMessage() + "\nFallback: Java CV режимы Анализ/Контуры/Маршрут работают."));
+                backgroundBusy = false;
+            }
+        });
     }
 
     private void analyzeCurrentImageVisual() {
@@ -288,8 +325,9 @@ public final class MainActivity extends Activity {
         if (lastImageInfo == null) { status.setText("Нет картинки. Для Bench путь: /storage/emulated/0/Download/" + AnalyzerBenchmark.DATASET_DIR); return; }
         String planInfo = currentPlan == null ? "план ещё не построен" : "действий=" + currentPlan.actions.size();
         String analysisInfo = lastAnalysis == null ? "анализа ещё нет" : russianAnalysisSummary(lastAnalysis, lastIntent, "");
+        String mlInfo = lastMlVisionResult == null ? "ML ещё не запускался" : lastMlVisionResult.summaryRu();
         Rect rect = previewView.currentImageRect();
-        status.setText(lastImageInfo.summary() + "\npreview=" + rect.width() + "x" + rect.height() + " | вид=" + previewView.previewModeName() + "\n" + analysisInfo + "\n" + planInfo + " | " + lastReconstructionSummary);
+        status.setText(lastImageInfo.summary() + "\npreview=" + rect.width() + "x" + rect.height() + " | вид=" + previewView.previewModeName() + "\n" + analysisInfo + "\n" + mlInfo + "\n" + planInfo + " | " + lastReconstructionSummary);
     }
 
     private void buildPlan(DrawMode mode) {

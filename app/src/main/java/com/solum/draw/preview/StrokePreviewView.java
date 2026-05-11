@@ -13,6 +13,9 @@ import android.view.View;
 import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
 import com.solum.draw.vision.VisionRegionMap;
+import com.solum.draw.vision.VisionResult;
+import com.solum.draw.vision.VisionObject;
+import com.solum.draw.vision.VisionLabel;
 import java.util.List;
 
 public final class StrokePreviewView extends View {
@@ -21,12 +24,14 @@ public final class StrokePreviewView extends View {
     private static final int MODE_ROUTE = 2;
     private static final int MODE_CONTOUR = 3;
     private static final int MODE_WHITE = 4;
+    private static final int MODE_ML = 5;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Bitmap sourceImage;
     private Bitmap analysisOverlay;
     private VisionRegionMap vision;
     private StrokePlan plan;
+    private VisionResult mlVisionResult;
     private int previewMode = MODE_SOURCE;
 
     public StrokePreviewView(Context context) {
@@ -52,9 +57,16 @@ public final class StrokePreviewView extends View {
 
     public void setPlan(StrokePlan plan) { this.plan = plan; invalidate(); }
 
+    public void setMlVisionResult(VisionResult result) {
+        this.mlVisionResult = result;
+        if (result != null) this.previewMode = MODE_ML;
+        invalidate();
+    }
+
     public String togglePreviewMode() {
-        previewMode = (previewMode + 1) % 5;
+        previewMode = (previewMode + 1) % 6;
         if (previewMode == MODE_ANALYSIS && analysisOverlay == null) previewMode = MODE_ROUTE;
+        if (previewMode == MODE_ML && mlVisionResult == null) previewMode = MODE_SOURCE;
         invalidate();
         return previewModeName();
     }
@@ -64,6 +76,7 @@ public final class StrokePreviewView extends View {
         if (previewMode == MODE_ROUTE) return "Маршрут";
         if (previewMode == MODE_CONTOUR) return "Контуры";
         if (previewMode == MODE_WHITE) return "Холст";
+        if (previewMode == MODE_ML && mlVisionResult != null) return "ML Анализ";
         return "Исходник";
     }
 
@@ -79,6 +92,7 @@ public final class StrokePreviewView extends View {
         drawPreviewSurface(canvas, dst);
         if (previewMode == MODE_ROUTE) drawRoute(canvas, dst);
         if (previewMode == MODE_CONTOUR) drawContours(canvas, dst);
+        if (previewMode == MODE_ML) drawMlVisionOverlay(canvas, dst);
         if (plan != null) drawPlanLayer(canvas, dst);
         drawModeLabel(canvas);
     }
@@ -101,10 +115,10 @@ public final class StrokePreviewView extends View {
             return;
         }
         Bitmap img = displayImageBase();
-        paint.setAlpha(previewMode == MODE_CONTOUR ? 96 : 220);
+        paint.setAlpha((previewMode == MODE_CONTOUR || previewMode == MODE_ML) ? 96 : 220);
         canvas.drawBitmap(img, null, dst, paint);
         paint.setAlpha(255);
-        if (previewMode == MODE_CONTOUR) {
+        if (previewMode == MODE_CONTOUR || previewMode == MODE_ML) {
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(118, 0, 0, 0));
             canvas.drawRect(dst, paint);
@@ -248,6 +262,68 @@ public final class StrokePreviewView extends View {
 
             idx++;
             if (idx >= 5) break;
+        }
+    }
+
+
+    private void drawMlVisionOverlay(Canvas canvas, Rect dst) {
+        if (mlVisionResult == null) return;
+
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb(190, 2, 8, 14));
+        canvas.drawRoundRect(new RectF(dst.left + 10, dst.top + 10, dst.right - 10, dst.top + 96), 14f, 14f, paint);
+
+        paint.setTextAlign(Paint.Align.LEFT);
+        paint.setFakeBoldText(false);
+        paint.setTextSize(15f);
+        paint.setColor(Color.rgb(234, 247, 255));
+        canvas.drawText("ML Kit: objects=" + mlVisionResult.objects.size() + " labels=" + mlVisionResult.labels.size(), dst.left + 22, dst.top + 36, paint);
+
+        StringBuilder lb = new StringBuilder();
+        int labelCount = Math.min(4, mlVisionResult.labels.size());
+        for (int i = 0; i < labelCount; i++) {
+            VisionLabel label = mlVisionResult.labels.get(i);
+            if (i > 0) lb.append(" · ");
+            lb.append(label.text).append(" ").append(Math.round(label.confidence * 100f)).append("%");
+        }
+
+        paint.setTextSize(13f);
+        paint.setColor(Color.rgb(34, 230, 242));
+        canvas.drawText(lb.length() == 0 ? "labels пока нет / модель может догружаться" : lb.toString(), dst.left + 22, dst.top + 62, paint);
+
+        int idx = 0;
+        for (VisionObject object : mlVisionResult.objects) {
+            RectF n = object.boxNorm;
+            RectF r = new RectF(
+                    dst.left + n.left * dst.width(),
+                    dst.top + n.top * dst.height(),
+                    dst.left + n.right * dst.width(),
+                    dst.top + n.bottom * dst.height()
+            );
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(idx == 0 ? 3.2f : 2.0f);
+            paint.setColor(idx == 0 ? Color.rgb(255, 196, 72) : Color.rgb(34, 230, 242));
+            canvas.drawRoundRect(r, 12f, 12f, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(220, 2, 8, 14));
+            RectF tag = new RectF(r.left, Math.max(dst.top + 4, r.top - 30), Math.min(dst.right - 4, r.left + 210), Math.max(dst.top + 34, r.top));
+            canvas.drawRoundRect(tag, 10f, 10f, paint);
+
+            paint.setTextSize(13f);
+            paint.setColor(idx == 0 ? Color.rgb(255, 196, 72) : Color.rgb(34, 230, 242));
+            canvas.drawText((idx + 1) + ". " + object.label + " " + Math.round(object.confidence * 100f) + "%", tag.left + 8, tag.top + 20, paint);
+
+            idx++;
+            if (idx >= 5) break;
+        }
+
+        if (mlVisionResult.objects.isEmpty()) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTextSize(14f);
+            paint.setColor(Color.rgb(255, 196, 72));
+            canvas.drawText("ML Kit не нашёл bbox. Java CV остаётся fallback.", dst.left + 22, dst.top + 84, paint);
         }
     }
 
