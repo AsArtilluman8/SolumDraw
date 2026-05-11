@@ -26,7 +26,11 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public final class AnalyzerBenchmark {
-    public static final String INPUT_DIR = "SolumDrawTestImages";
+    
+    private static final int QUICK_BENCH_LIMIT = 30;
+    private static int benchLimitForNextRun = 0;
+
+public static final String INPUT_DIR = "SolumDrawTestImages";
     public static final String DATASET_DIR = "SolumDrawDataset_v1/SolumDrawDataset_v1";
 
     private AnalyzerBenchmark() {}
@@ -38,6 +42,18 @@ public final class AnalyzerBenchmark {
 
     public static Result run(Context context) throws Exception { return run(context, null); }
 
+    public static Result runQuick(Context context) throws Exception { return runQuick(context, null); }
+
+    public static Result runQuick(Context context, Progress progress) throws Exception {
+        int old = benchLimitForNextRun;
+        benchLimitForNextRun = QUICK_BENCH_LIMIT;
+        try {
+            return run(context, progress);
+        } finally {
+            benchLimitForNextRun = old;
+        }
+    }
+
     public static Result run(Context context, Progress progress) throws Exception {
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         File dataset = pickDataset(downloads);
@@ -47,6 +63,9 @@ public final class AnalyzerBenchmark {
         List<BenchImage> images = new ArrayList<>();
         collectImages(dataset, dataset, images);
         Collections.sort(images, new Comparator<BenchImage>() { @Override public int compare(BenchImage a, BenchImage b) { return a.relativeName.compareTo(b.relativeName); } });
+        if (benchLimitForNextRun > 0 && images.size() > benchLimitForNextRun) {
+            images = new ArrayList<BenchImage>(images.subList(0, benchLimitForNextRun));
+        }
 
         int labelsFound = 0;
         for (BenchImage img : images) if (img.expected.length() > 0) labelsFound++;
