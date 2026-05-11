@@ -26,6 +26,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public final class AnalyzerBenchmark {
+
     public static final String INPUT_DIR = "SolumDrawTestImages";
     public static final String DATASET_DIR = "SolumDrawDataset_v1/SolumDrawDataset_v1";
 
@@ -33,10 +34,14 @@ public final class AnalyzerBenchmark {
 
     public interface Progress {
         void onStart(String datasetPath, int total, int labelsFound);
+
+        
+
         void onItem(int index, int total, String name, int top1, int top3, int missingLabels);
     }
 
-    public static Result run(Context context) throws Exception { return run(context, null); }
+
+
 
     public static Result run(Context context, Progress progress) throws Exception {
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);

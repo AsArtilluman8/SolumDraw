@@ -96,7 +96,7 @@ public final class MainActivity extends Activity {
         Button mlButton = button("ML");
         Button infoButton = button("Инфо");
         Button canvasButton = button("Вид");
-        Button benchButton = button("Bench");
+        Button benchButton = button("QuickBench");
         Button fastButton = button("Быстро");
         Button naturalButton = button("Натур.");
         Button exportButton = button("Экспорт");
