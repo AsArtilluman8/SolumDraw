@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory;
 import android.os.Environment;
 import com.solum.draw.vision.MlKitVisionProbe;
 import com.solum.draw.vision.VisionDecisionEngine;
+import com.solum.draw.vision.VisionDecisionPostProcessor;
 import com.solum.draw.vision.VisionResult;
 import java.io.BufferedReader;
 import java.io.File;
@@ -87,6 +88,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
                 VisionResult ml = MlKitVisionProbe.analyzeBlocking(bitmap, 9000L);
                 String hint = analysis.genre + " " + analysis.warnings + " " + note + " old=" + oldPredicted;
                 VisionDecisionEngine.Decision decision = VisionDecisionEngine.analyze(ml.labels, ml.objects, hint, "");
+                decision = VisionDecisionPostProcessor.refine(decision, ml.labels, ml.objects, hint);
 
                 String predicted = decision.datasetClass;
                 List<String> candidates = top3FromDecision(decision, analysis, predicted);
@@ -114,6 +116,10 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         writeText(new File(outDir, "errors.txt"), errorsText(errors));
         writeText(new File(outDir, "axis_report.md"), axisReportMd(items));
         writeText(new File(outDir, "axis_report.csv"), axisReportCsv(items));
+        writeText(new File(outDir, "class_report.csv"), classReportCsv(items));
+        writeText(new File(outDir, "fix_suggestions.md"), fixSuggestionsMd(items, errors));
+        writeText(new File(outDir, "calibration_hints.md"), calibrationHintsMd(items));
+        writeText(new File(outDir, "calibration_rules.json"), calibrationRulesJson(items));
 
         File zip = new File(downloads, outDir.getName() + ".zip");
         zipDir(outDir, zip);
@@ -413,6 +419,295 @@ private static int get(Map<String,Integer> m, String k) {
         final Map<String,Integer> axisTotal = new HashMap<>();
         final Map<String,Integer> axisCorrect = new HashMap<>();
         final Map<String,Integer> axisConfusions = new HashMap<>();
+    }
+
+
+
+    private static String calibrationHintsMd(List<ItemResult> items) {
+        Map<String,ClassStats> byClass = new HashMap<>();
+        Map<String,Integer> exactConfusions = new HashMap<>();
+        Map<String,Integer> axisConfusions = new HashMap<>();
+
+        for (ItemResult it : items) {
+            if (!it.hasExpected) continue;
+
+            ClassStats st = byClass.get(it.expected);
+            if (st == null) {
+                st = new ClassStats();
+                st.name = it.expected;
+                st.axis = axisOf(it.expected);
+                byClass.put(it.expected, st);
+            }
+
+            st.total++;
+            if (it.expected.equals(it.predicted)) st.strictOk++;
+            if (axisOf(it.expected).equals(axisOf(it.predicted))) st.axisOk++;
+            inc(st.predictedTo, it.predicted);
+
+            if (!it.expected.equals(it.predicted)) {
+                inc(exactConfusions, it.expected + " -> " + it.predicted);
+            }
+            if (!axisOf(it.expected).equals(axisOf(it.predicted))) {
+                inc(axisConfusions, axisOf(it.expected) + " -> " + axisOf(it.predicted));
+            }
+        }
+
+        StringBuilder b = new StringBuilder();
+        b.append("# Calibration Hints\n\n");
+        b.append("Это не финальный ML. Это карта, какие правила чинить первыми.\n\n");
+
+        b.append("## Priority 1: strict низкий, axis высокий\n\n");
+        b.append("Значит общий тип понятен, но точный жанр/папка выбран неверно.\n\n");
+        int n = 0;
+        for (Map.Entry<String,ClassStats> e : sortedClassStats(byClass)) {
+            ClassStats st = e.getValue();
+            if (st.total <= 0) continue;
+            float strict = st.strictOk / (float) st.total;
+            float axis = st.axisOk / (float) st.total;
+            if (strict < 0.35f && axis >= 0.60f) {
+                b.append("- ").append(st.name)
+                        .append(": strict ").append(pctText(st.strictOk, st.total))
+                        .append(", axis ").append(pctText(st.axisOk, st.total))
+                        .append(", mostly predicted as: ").append(topMapInline(st.predictedTo, 5))
+                        .append("\n");
+                n++;
+            }
+        }
+        if (n == 0) b.append("- none\n");
+
+        b.append("\n## Priority 2: axis низкий\n\n");
+        b.append("Значит правила вообще неправильно понимают тип изображения.\n\n");
+        n = 0;
+        for (Map.Entry<String,ClassStats> e : sortedClassStats(byClass)) {
+            ClassStats st = e.getValue();
+            if (st.total <= 0) continue;
+            float axis = st.axisOk / (float) st.total;
+            if (axis < 0.50f) {
+                b.append("- ").append(st.name)
+                        .append(": axis ").append(pctText(st.axisOk, st.total))
+                        .append(", predicted as: ").append(topMapInline(st.predictedTo, 5))
+                        .append("\n");
+                n++;
+            }
+        }
+        if (n == 0) b.append("- none\n");
+
+        b.append("\n## Current obvious fixes from this run\n\n");
+        b.append("- abstract_art should not collapse into watercolor_paint when shapes are non-object/non-character.\n");
+        b.append("- anime_manga should beat ui_screenshot when skin/face/eyes/hair evidence exists.\n");
+        b.append("- cartoon_comic needs its own class, not product_object/animal fallback.\n");
+        b.append("- diagram_chart should be separated from lineart_sketch by layout/arrow/text/blocks evidence.\n");
+        b.append("- ui_screenshot should require strong phone/app UI evidence, not just text-like regions.\n");
+
+        b.append("\n## Top exact confusions\n\n");
+        n = 0;
+        for (Map.Entry<String,Integer> e : sorted(exactConfusions)) {
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+            if (++n >= 20) break;
+        }
+
+        b.append("\n## Top axis confusions\n\n");
+        n = 0;
+        for (Map.Entry<String,Integer> e : sorted(axisConfusions)) {
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+            if (++n >= 20) break;
+        }
+
+        return b.toString();
+    }
+
+    private static String calibrationRulesJson(List<ItemResult> items) {
+        Map<String,ClassStats> byClass = new HashMap<>();
+
+        for (ItemResult it : items) {
+            if (!it.hasExpected) continue;
+            ClassStats st = byClass.get(it.expected);
+            if (st == null) {
+                st = new ClassStats();
+                st.name = it.expected;
+                st.axis = axisOf(it.expected);
+                byClass.put(it.expected, st);
+            }
+            st.total++;
+            if (it.expected.equals(it.predicted)) st.strictOk++;
+            if (axisOf(it.expected).equals(axisOf(it.predicted))) st.axisOk++;
+            inc(st.predictedTo, it.predicted);
+        }
+
+        StringBuilder b = new StringBuilder();
+        b.append("{\n");
+        b.append("  \"note\": \"Generated benchmark calibration hints. Do not treat as training data yet.\",\n");
+        b.append("  \"classes\": [\n");
+
+        int n = 0;
+        for (Map.Entry<String,ClassStats> e : sortedClassStats(byClass)) {
+            ClassStats st = e.getValue();
+            if (n++ > 0) b.append(",\n");
+            b.append("    {\n");
+            b.append("      \"class\": \"").append(esc(st.name)).append("\",\n");
+            b.append("      \"axis\": \"").append(esc(st.axis)).append("\",\n");
+            b.append("      \"total\": ").append(st.total).append(",\n");
+            b.append("      \"strict_ok\": ").append(st.strictOk).append(",\n");
+            b.append("      \"axis_ok\": ").append(st.axisOk).append(",\n");
+            b.append("      \"predicted_as\": \"").append(esc(topMapInline(st.predictedTo, 8))).append("\"\n");
+            b.append("    }");
+        }
+
+        b.append("\n  ]\n");
+        b.append("}\n");
+        return b.toString();
+    }
+
+    private static String classReportCsv(List<ItemResult> items) {
+        Map<String,ClassStats> m = new HashMap<>();
+        for (ItemResult it : items) {
+            if (!it.hasExpected) continue;
+            ClassStats st = m.get(it.expected);
+            if (st == null) {
+                st = new ClassStats();
+                st.name = it.expected;
+                st.axis = axisOf(it.expected);
+                m.put(it.expected, st);
+            }
+            st.total++;
+            if (it.expected.equals(it.predicted)) st.strictOk++;
+            if (axisOf(it.expected).equals(axisOf(it.predicted))) st.axisOk++;
+            inc(st.predictedTo, it.predicted);
+        }
+
+        StringBuilder b = new StringBuilder();
+        b.append("class,axis,total,strict_ok,strict_pct,axis_ok,axis_pct,top_wrong_predictions\n");
+        for (Map.Entry<String,ClassStats> e : sortedClassStats(m)) {
+            ClassStats st = e.getValue();
+            b.append(csv(st.name)).append(',')
+                    .append(csv(st.axis)).append(',')
+                    .append(st.total).append(',')
+                    .append(st.strictOk).append(',')
+                    .append(csv(pctText(st.strictOk, st.total))).append(',')
+                    .append(st.axisOk).append(',')
+                    .append(csv(pctText(st.axisOk, st.total))).append(',')
+                    .append(csv(topMapInline(st.predictedTo, 6))).append('\n');
+        }
+        return b.toString();
+    }
+
+    private static String fixSuggestionsMd(List<ItemResult> items, List<String> errors) {
+        Map<String,ClassStats> byClass = new HashMap<>();
+        Map<String,Integer> confusions = new HashMap<>();
+        Map<String,Integer> axisConfusions = new HashMap<>();
+
+        for (ItemResult it : items) {
+            if (!it.hasExpected) continue;
+
+            ClassStats st = byClass.get(it.expected);
+            if (st == null) {
+                st = new ClassStats();
+                st.name = it.expected;
+                st.axis = axisOf(it.expected);
+                byClass.put(it.expected, st);
+            }
+
+            st.total++;
+            if (it.expected.equals(it.predicted)) st.strictOk++;
+            if (axisOf(it.expected).equals(axisOf(it.predicted))) st.axisOk++;
+            inc(st.predictedTo, it.predicted);
+
+            if (!it.expected.equals(it.predicted)) {
+                inc(confusions, it.expected + " -> " + it.predicted);
+            }
+            if (!axisOf(it.expected).equals(axisOf(it.predicted))) {
+                inc(axisConfusions, axisOf(it.expected) + " -> " + axisOf(it.predicted));
+            }
+        }
+
+        StringBuilder b = new StringBuilder();
+        b.append("# SolumDraw Fix Suggestions\n\n");
+        b.append("Цель отчета: показать, что чинить первым, без ручного просмотра 200+ картинок.\n\n");
+
+        b.append("## Runtime errors\n\n");
+        if (errors == null || errors.isEmpty()) {
+            b.append("- none\n");
+        } else {
+            for (String e : errors) b.append("- ").append(e).append("\n");
+        }
+
+        b.append("\n## Worst classes by strict accuracy\n\n");
+        int n = 0;
+        for (Map.Entry<String,ClassStats> e : sortedClassStats(byClass)) {
+            ClassStats st = e.getValue();
+            if (st.total <= 0) continue;
+            int wrong = st.total - st.strictOk;
+            if (wrong <= 0) continue;
+            b.append("- ").append(st.name)
+                    .append(": strict ").append(st.strictOk).append("/").append(st.total)
+                    .append(" = ").append(pctText(st.strictOk, st.total))
+                    .append(", axis ").append(st.axisOk).append("/").append(st.total)
+                    .append(" = ").append(pctText(st.axisOk, st.total))
+                    .append(", predicted as: ").append(topMapInline(st.predictedTo, 5))
+                    .append("\n");
+            if (++n >= 15) break;
+        }
+        if (n == 0) b.append("- none\n");
+
+        b.append("\n## Top exact confusions\n\n");
+        n = 0;
+        for (Map.Entry<String,Integer> e : sorted(confusions)) {
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+            if (++n >= 20) break;
+        }
+        if (n == 0) b.append("- none\n");
+
+        b.append("\n## Top axis confusions\n\n");
+        n = 0;
+        for (Map.Entry<String,Integer> e : sorted(axisConfusions)) {
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+            if (++n >= 20) break;
+        }
+        if (n == 0) b.append("- none\n");
+
+        b.append("\n## Next patch priority\n\n");
+        b.append("1. Если class strict низкий, но axis высокий — чинить dataset router/top3 mapping.\n");
+        b.append("2. Если axis низкий — чинить VisionDecisionEngine правила признаков.\n");
+        b.append("3. Если много Runtime errors — чинить ImageAnalyzer crash/fallback.\n");
+        b.append("4. Если UI/document путается со style_art — усилить text/panel/icon признаки.\n");
+        b.append("5. Если style_art путается с character_body — разделить style и content как две независимые оси.\n");
+        return b.toString();
+    }
+
+    private static List<Map.Entry<String,ClassStats>> sortedClassStats(Map<String,ClassStats> m) {
+        List<Map.Entry<String,ClassStats>> e = new ArrayList<>(m.entrySet());
+        Collections.sort(e, new Comparator<Map.Entry<String,ClassStats>>() {
+            @Override public int compare(Map.Entry<String,ClassStats> a, Map.Entry<String,ClassStats> b) {
+                ClassStats aa = a.getValue();
+                ClassStats bb = b.getValue();
+                int aw = aa.total - aa.strictOk;
+                int bw = bb.total - bb.strictOk;
+                if (bw != aw) return bw - aw;
+                return aa.name.compareTo(bb.name);
+            }
+        });
+        return e;
+    }
+
+    private static String topMapInline(Map<String,Integer> m, int limit) {
+        StringBuilder b = new StringBuilder();
+        int n = 0;
+        for (Map.Entry<String,Integer> e : sorted(m)) {
+            if (n > 0) b.append(" | ");
+            b.append(e.getKey()).append(":").append(e.getValue());
+            if (++n >= limit) break;
+        }
+        if (n == 0) return "none";
+        return b.toString();
+    }
+
+    private static final class ClassStats {
+        String name = "";
+        String axis = "";
+        int total = 0;
+        int strictOk = 0;
+        int axisOk = 0;
+        final Map<String,Integer> predictedTo = new HashMap<>();
     }
 
     private static String errorsText(List<String> errors) {
