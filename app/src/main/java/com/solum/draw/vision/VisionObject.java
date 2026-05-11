@@ -30,6 +30,6 @@ public final class VisionObject {
     }
 
     public float mainScore() {
-        return area() * 0.55f + centerScore() * 0.30f + confidence * 0.15f;
+        return HybridDrawingBrain.objectMainScore(this);
     }
 }

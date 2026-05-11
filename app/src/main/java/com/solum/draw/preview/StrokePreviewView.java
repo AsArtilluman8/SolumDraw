@@ -277,7 +277,7 @@ public final class StrokePreviewView extends View {
         paint.setFakeBoldText(false);
         paint.setTextSize(15f);
         paint.setColor(Color.rgb(234, 247, 255));
-        canvas.drawText("ML Kit: objects=" + mlVisionResult.objects.size() + " labels=" + mlVisionResult.labels.size(), dst.left + 22, dst.top + 36, paint);
+        canvas.drawText(mlVisionResult.overlayTitleRu(), dst.left + 22, dst.top + 36, paint);
 
         StringBuilder lb = new StringBuilder();
         int labelCount = Math.min(4, mlVisionResult.labels.size());
@@ -302,8 +302,9 @@ public final class StrokePreviewView extends View {
             );
 
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(idx == 0 ? 3.2f : 2.0f);
-            paint.setColor(idx == 0 ? Color.rgb(255, 196, 72) : Color.rgb(34, 230, 242));
+            paint.setStrokeWidth(idx == 0 ? 3.2f : 1.6f);
+            int boxAlpha = object.mainScore() < 0.28f ? 95 : 230;
+            paint.setColor(idx == 0 ? Color.argb(245, 255, 196, 72) : Color.argb(boxAlpha, 34, 230, 242));
             canvas.drawRoundRect(r, 12f, 12f, paint);
 
             paint.setStyle(Paint.Style.FILL);
