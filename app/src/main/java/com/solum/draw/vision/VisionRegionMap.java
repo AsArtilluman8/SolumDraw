@@ -1,0 +1,208 @@
+package com.solum.draw.vision;
+
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.RectF;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+
+public final class VisionRegionMap {
+    private static final int GRID_W = 96;
+    private static final int MAX_GRID_H = 160;
+
+    public final int gridWidth;
+    public final int gridHeight;
+    public final boolean[] edge;
+    public final boolean[] boundary;
+    public final boolean[] subjectMask;
+    public final List<Region> regions;
+    public final Region mainRegion;
+
+    private VisionRegionMap(int gridWidth, int gridHeight, boolean[] edge, boolean[] boundary, boolean[] subjectMask, List<Region> regions, Region mainRegion) {
+        this.gridWidth = gridWidth;
+        this.gridHeight = gridHeight;
+        this.edge = edge;
+        this.boundary = boundary;
+        this.subjectMask = subjectMask;
+        this.regions = regions;
+        this.mainRegion = mainRegion;
+    }
+
+    public static VisionRegionMap analyze(Bitmap src) {
+        if (src == null) return empty();
+        int sw = src.getWidth();
+        int sh = src.getHeight();
+        int gw = GRID_W;
+        int gh = Math.max(32, Math.round(gw * sh / (float)Math.max(1, sw)));
+        gh = Math.min(MAX_GRID_H, gh);
+        int count = gw * gh;
+        int[] lum = new int[count];
+        int[] sat = new int[count];
+        int sumL = 0, sumS = 0;
+        for (int y = 0; y < gh; y++) {
+            for (int x = 0; x < gw; x++) {
+                int px = Math.min(sw - 1, Math.max(0, Math.round((x + 0.5f) * sw / gw)));
+                int py = Math.min(sh - 1, Math.max(0, Math.round((y + 0.5f) * sh / gh)));
+                int c = src.getPixel(px, py);
+                int r = Color.red(c), g = Color.green(c), b = Color.blue(c);
+                int mx = Math.max(r, Math.max(g, b));
+                int mn = Math.min(r, Math.min(g, b));
+                int id = y * gw + x;
+                lum[id] = (r * 30 + g * 59 + b * 11) / 100;
+                sat[id] = mx - mn;
+                sumL += lum[id];
+                sumS += sat[id];
+            }
+        }
+        int avgL = sumL / Math.max(1, count);
+        int avgS = sumS / Math.max(1, count);
+        boolean[] edge = new boolean[count];
+        boolean[] mask = new boolean[count];
+        for (int y = 1; y < gh - 1; y++) {
+            for (int x = 1; x < gw - 1; x++) {
+                int id = y * gw + x;
+                int e = Math.abs(lum[id + 1] - lum[id - 1]) + Math.abs(lum[id + gw] - lum[id - gw]);
+                boolean isEdge = e > 30;
+                boolean salient = isEdge || Math.abs(lum[id] - avgL) > 34 || Math.abs(sat[id] - avgS) > 42;
+                edge[id] = isEdge;
+                mask[id] = salient;
+            }
+        }
+        mask = close(mask, gw, gh);
+        boolean[] boundary = boundary(mask, gw, gh);
+        List<Region> regions = regions(mask, edge, gw, gh);
+        Collections.sort(regions, new Comparator<Region>() { @Override public int compare(Region a, Region b) { return Float.compare(b.importance, a.importance); } });
+        Region main = pickMain(regions);
+        return new VisionRegionMap(gw, gh, edge, boundary, mask, regions, main);
+    }
+
+    public List<RoutePoint> route() {
+        ArrayList<RoutePoint> out = new ArrayList<>();
+        Region main = mainRegion;
+        Region detail = pickDetail(main);
+        out.add(new RoutePoint(1, "фон", 0.50f, 0.16f));
+        out.add(new RoutePoint(2, "масса", main.cx, clamp(main.top + main.h * 0.28f, 0.08f, 0.92f)));
+        out.add(new RoutePoint(3, "объект", main.cx, main.cy));
+        out.add(new RoutePoint(4, "тени", clamp(main.cx - main.w * 0.22f, 0.06f, 0.94f), clamp(main.cy + main.h * 0.22f, 0.08f, 0.94f)));
+        out.add(new RoutePoint(5, "детали", detail.cx, detail.cy));
+        return out;
+    }
+
+    public List<Region> displayRegions() {
+        ArrayList<Region> out = new ArrayList<>();
+        for (Region r : regions) {
+            if (out.size() >= 10) break;
+            if (r.w * r.h > 0.72f) continue;
+            if (r.area >= 8) out.add(r);
+        }
+        if (out.isEmpty()) out.add(mainRegion);
+        return out;
+    }
+
+    public boolean isBoundary(int x, int y) {
+        if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) return false;
+        return boundary[y * gridWidth + x];
+    }
+
+    private Region pickDetail(Region main) {
+        for (Region r : regions) if (r != main && r.area > 5 && r.w * r.h < main.w * main.h * 0.8f) return r;
+        return new Region("детали", clamp(main.cx + main.w * 0.25f, 0.08f, 0.92f), clamp(main.cy - main.h * 0.08f, 0.08f, 0.92f), main.w * .3f, main.h * .2f, main.area / 4, main.importance * .5f, main.left, main.top);
+    }
+
+    private static Region pickMain(List<Region> list) {
+        for (Region r : list) {
+            if (r.w * r.h < 0.72f && r.area > 8) return r;
+        }
+        if (!list.isEmpty()) return list.get(0);
+        return new Region("объект", .5f, .55f, .25f, .25f, 0, .1f, .375f, .425f);
+    }
+
+    private static List<Region> regions(boolean[] mask, boolean[] edge, int gw, int gh) {
+        boolean[] seen = new boolean[mask.length];
+        ArrayList<Region> out = new ArrayList<>();
+        int[] dx = {1,-1,0,0};
+        int[] dy = {0,0,1,-1};
+        for (int y = 1; y < gh - 1; y++) for (int x = 1; x < gw - 1; x++) {
+            int start = y * gw + x;
+            if (!mask[start] || seen[start]) continue;
+            ArrayDeque<Integer> q = new ArrayDeque<>(); q.add(start); seen[start] = true;
+            int minX = x, maxX = x, minY = y, maxY = y, area = 0, edgeCount = 0;
+            while (!q.isEmpty()) {
+                int id = q.removeFirst(); int px = id % gw; int py = id / gw;
+                area++; if (edge[id]) edgeCount++;
+                if (px < minX) minX = px; if (px > maxX) maxX = px; if (py < minY) minY = py; if (py > maxY) maxY = py;
+                for (int k = 0; k < 4; k++) {
+                    int nx = px + dx[k], ny = py + dy[k];
+                    if (nx <= 0 || ny <= 0 || nx >= gw - 1 || ny >= gh - 1) continue;
+                    int nid = ny * gw + nx;
+                    if (!seen[nid] && mask[nid]) { seen[nid] = true; q.add(nid); }
+                }
+            }
+            if (area < 5) continue;
+            float left = minX / (float)gw, top = minY / (float)gh;
+            float w = Math.max(1, maxX - minX + 1) / (float)gw;
+            float h = Math.max(1, maxY - minY + 1) / (float)gh;
+            float cx = left + w * .5f, cy = top + h * .5f;
+            float center = 1f - Math.min(.78f, Math.abs(cx - .5f) + Math.abs(cy - .55f) * .65f);
+            float density = area / (float)Math.max(1, (maxX - minX + 1) * (maxY - minY + 1));
+            float imp = density * .42f + center * .28f + Math.min(.3f, edgeCount / (float)Math.max(1, area));
+            out.add(new Region("область", cx, cy, w, h, area, imp, left, top));
+        }
+        return out;
+    }
+
+    private static boolean[] close(boolean[] src, int gw, int gh) {
+        boolean[] dil = new boolean[src.length];
+        for (int y = 1; y < gh - 1; y++) for (int x = 1; x < gw - 1; x++) {
+            int id = y * gw + x;
+            boolean v = src[id];
+            for (int yy = -1; yy <= 1 && !v; yy++) for (int xx = -1; xx <= 1; xx++) if (src[id + yy * gw + xx]) { v = true; break; }
+            dil[id] = v;
+        }
+        boolean[] ero = new boolean[src.length];
+        for (int y = 1; y < gh - 1; y++) for (int x = 1; x < gw - 1; x++) {
+            int id = y * gw + x;
+            boolean v = true;
+            for (int yy = -1; yy <= 1 && v; yy++) for (int xx = -1; xx <= 1; xx++) if (!dil[id + yy * gw + xx]) { v = false; break; }
+            ero[id] = v;
+        }
+        return ero;
+    }
+
+    private static boolean[] boundary(boolean[] mask, int gw, int gh) {
+        boolean[] b = new boolean[mask.length];
+        for (int y = 1; y < gh - 1; y++) for (int x = 1; x < gw - 1; x++) {
+            int id = y * gw + x;
+            if (!mask[id]) continue;
+            boolean outside = !mask[id + 1] || !mask[id - 1] || !mask[id + gw] || !mask[id - gw];
+            b[id] = outside;
+        }
+        return b;
+    }
+
+    private static VisionRegionMap empty() {
+        boolean[] one = new boolean[1];
+        Region r = new Region("объект", .5f, .5f, .2f, .2f, 0, .1f, .4f, .4f);
+        ArrayList<Region> list = new ArrayList<>(); list.add(r);
+        return new VisionRegionMap(1, 1, one, one, one, list, r);
+    }
+
+    private static float clamp(float v, float lo, float hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    public static final class Region {
+        public final String label;
+        public final float cx, cy, w, h, left, top;
+        public final int area;
+        public final float importance;
+        Region(String label, float cx, float cy, float w, float h, int area, float importance, float left, float top) { this.label=label; this.cx=cx; this.cy=cy; this.w=w; this.h=h; this.area=area; this.importance=importance; this.left=left; this.top=top; }
+        public RectF rectIn(RectF dst) { return new RectF(dst.left + left * dst.width(), dst.top + top * dst.height(), dst.left + (left + w) * dst.width(), dst.top + (top + h) * dst.height()); }
+    }
+
+    public static final class RoutePoint {
+        public final int index; public final String label; public final float x, y;
+        RoutePoint(int index, String label, float x, float y) { this.index=index; this.label=label; this.x=x; this.y=y; }
+    }
+}
