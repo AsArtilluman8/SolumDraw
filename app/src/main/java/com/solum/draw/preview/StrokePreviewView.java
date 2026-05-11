@@ -140,22 +140,56 @@ public final class StrokePreviewView extends View {
     private void drawContours(Canvas canvas, Rect dst) {
         ensureVision();
         if (vision == null) return;
-        drawRegionBoxes(canvas, dst, true);
-        int gw = vision.gridWidth;
-        int gh = vision.gridHeight;
-        float cw = dst.width() / (float)Math.max(1, gw);
-        float ch = dst.height() / (float)Math.max(1, gh);
+
+        RectF df = new RectF(dst);
+
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(220, 34, 230, 242));
-        float dot = Math.max(1.0f, Math.min(cw, ch) * 0.36f);
-        for (int y = 1; y < gh - 1; y++) {
-            for (int x = 1; x < gw - 1; x++) {
-                if (!vision.isBoundary(x, y)) continue;
-                float px = dst.left + (x + .5f) * cw;
-                float py = dst.top + (y + .5f) * ch;
-                canvas.drawCircle(px, py, dot, paint);
+        int idx = 0;
+        for (VisionRegionMap.Region r : vision.displayRegions()) {
+            RectF rr = r.rectIn(df);
+            if (rr.width() < 12 || rr.height() < 12) continue;
+
+            int alpha = idx == 0 ? 72 : 42;
+            int color;
+            switch (idx % 6) {
+                case 0: color = Color.argb(alpha, 34, 230, 242); break;
+                case 1: color = Color.argb(alpha, 255, 196, 72); break;
+                case 2: color = Color.argb(alpha, 155, 107, 255); break;
+                case 3: color = Color.argb(alpha, 80, 255, 150); break;
+                case 4: color = Color.argb(alpha, 255, 90, 140); break;
+                default: color = Color.argb(alpha, 120, 180, 255); break;
             }
+
+            paint.setColor(color);
+            canvas.drawRoundRect(rr, 10f, 10f, paint);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(idx == 0 ? 2.6f : 1.5f);
+            paint.setColor(idx == 0 ? Color.argb(235, 34, 230, 242) : Color.argb(150, 230, 240, 255));
+            canvas.drawRoundRect(rr, 10f, 10f, paint);
+            paint.setStyle(Paint.Style.FILL);
+
+            idx++;
+            if (idx >= 10) break;
         }
+
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND);
+        paint.setStrokeWidth(2.2f);
+        paint.setColor(Color.argb(240, 34, 230, 242));
+
+        for (float[] line : vision.contourPolylines()) {
+            if (line.length < 4) continue;
+            Path path = new Path();
+            path.moveTo(dst.left + line[0] * dst.width(), dst.top + line[1] * dst.height());
+            for (int i = 2; i < line.length - 1; i += 2) {
+                path.lineTo(dst.left + line[i] * dst.width(), dst.top + line[i + 1] * dst.height());
+            }
+            canvas.drawPath(path, paint);
+        }
+
+        drawRoute(canvas, dst);
     }
 
     private void drawRegionBoxes(Canvas canvas, Rect dst, boolean strong) {
