@@ -1,5 +1,6 @@
 package com.solum.draw.vision;
 
+import android.graphics.RectF;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -25,6 +26,18 @@ public final class VisionResult {
                 return Float.compare(b.confidence, a.confidence);
             }
         });
+
+        if (HybridDrawingBrain.shouldCreateCharacterFallback(this.labels, this.objects)) {
+            ArrayList<VisionLabel> fallbackLabels = new ArrayList<>();
+            fallbackLabels.add(new VisionLabel("character fallback", 0.62f, "java-cv-fallback"));
+            this.objects.add(new VisionObject(
+                    new RectF(0.12f, 0.06f, 0.88f, 0.96f),
+                    0.62f,
+                    "character fallback",
+                    "java-cv-fallback",
+                    fallbackLabels
+            ));
+        }
 
         Collections.sort(this.objects, new Comparator<VisionObject>() {
             @Override public int compare(VisionObject a, VisionObject b) {
@@ -71,6 +84,7 @@ public final class VisionResult {
         if (!objects.isEmpty()) {
             VisionObject m = mainObject();
             b.append("\nГлавный bbox: ").append(m.label)
+             .append(" | ").append(m.source)
              .append(" | score ").append(Math.round(m.mainScore() * 100f))
              .append(" | area ").append(Math.round(m.area() * 100f)).append("%");
         } else {
