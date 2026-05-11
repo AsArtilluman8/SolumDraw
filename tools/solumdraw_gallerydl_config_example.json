@@ -1,0 +1,35 @@
+{
+  "extractor": {
+    "base-directory": "./datasets/incoming_gallerydl",
+    "archive": "./datasets/gallerydl_archive.sqlite3",
+    "skip": true,
+    "sleep": 1.0,
+    "sleep-request": 0.5,
+    "retries": 3,
+    "image-filter": "extension in ('jpg', 'jpeg', 'png', 'webp') and filesize <= 4194304",
+    "postprocessors": [
+      {
+        "name": "metadata",
+        "event": "post",
+        "filename": "{filename}.json"
+      }
+    ]
+  },
+  "downloader": {
+    "filesize-min": 4096,
+    "filesize-max": 4194304,
+    "part": true,
+    "mtime": true
+  },
+  "output": {
+    "mode": "terminal",
+    "progress": true
+  },
+  "solumdraw_notes": {
+    "purpose": "Safe image-only dataset collection example for SolumDraw.",
+    "allowed_extensions": ["jpg", "jpeg", "png", "webp"],
+    "blocked_extensions": ["mp4", "webm", "gif", "mov", "m4v", "mkv", "avi", "zip", "rar", "7z"],
+    "max_file_size_mb": 4,
+    "recommended_next_step": "Run tools/solumdraw_dataset_guard.py after each collection session."
+  }
+}
