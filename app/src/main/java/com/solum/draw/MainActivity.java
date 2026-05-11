@@ -1,5 +1,7 @@
 package com.solum.draw;
 
+
+import com.solum.draw.vision.DatasetBenchmarkRunner;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
@@ -400,4 +402,40 @@ public final class MainActivity extends Activity {
     private static String ruStrategy(String genre, DrawingIntentAnalysis intent) { if (genre.contains("landscape") || genre.contains("painting") || genre.contains("concept")) return "фон -> большие массы -> свет/тень -> главный объект -> детали"; if (intent != null) { String i = intent.primaryIntent; if (i.contains("character")) return "фон -> силуэт -> волосы/одежда -> лицо -> детали"; if (i.contains("portrait")) return "фон -> голова/кожа -> волосы -> глаза/нос/рот -> тени"; if (i.contains("scene")) return "фон -> большие массы -> свет/тень -> главные объекты -> мелкие детали"; if (i.contains("ui")) return "фон -> панели -> кнопки -> иконки -> текст"; if (i.contains("logo")) return "фон -> главный символ -> вырезы -> чёткие края -> блики"; } return "фон -> крупные формы -> контуры -> тени -> блики -> детали"; }
     private static String shorten(String s, int max) { return s.length() <= max ? s : s.substring(0, max) + "..."; }
     private static String pct(int value, int total) { return total <= 0 ? "n/a" : Math.round(100f * value / total) + "%"; }
+    private void runDatasetBenchmarkPack27D() {
+        try {
+            DatasetBenchmarkRunner.Report report = DatasetBenchmarkRunner.buildBenchmarkPack(this);
+            solumSetStatus27D(report.summary);
+        } catch (Throwable t) {
+            solumSetStatus27D("Benchmark error: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
+    }
+
+    private void solumSetStatus27D(final String text) {
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                boolean applied = false;
+                String[] names = {
+                        "statusText", "statusView", "statusLabel", "infoText",
+                        "analysisText", "resultText", "topText", "debugText"
+                };
+                for (String name : names) {
+                    try {
+                        java.lang.reflect.Field f = MainActivity.this.getClass().getDeclaredField(name);
+                        f.setAccessible(true);
+                        Object v = f.get(MainActivity.this);
+                        if (v instanceof android.widget.TextView) {
+                            ((android.widget.TextView) v).setText(text);
+                            applied = true;
+                            break;
+                        }
+                    } catch (Throwable ignored) {}
+                }
+                if (!applied) {
+                    android.widget.Toast.makeText(MainActivity.this, text, android.widget.Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+    }
+
 }
