@@ -12,7 +12,10 @@ public final class VisionDecisionPostProcessor {
             Object objects,
             String hint
     ) {
+        // Patch 27P: disabled aggressive 27O calibration.
+        // It collapsed too many classes into anime_manga and reduced full Bench from 13%/25% to 4%/6%.
         if (decision == null) return decision;
+        if (true) return decision;
 
         String oldClass = safe(getStringField(decision, "datasetClass"));
         String oldTop = safe(getStringField(decision, "topLine"));
