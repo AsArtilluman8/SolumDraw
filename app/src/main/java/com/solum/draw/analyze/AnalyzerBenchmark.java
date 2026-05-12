@@ -883,6 +883,11 @@ private static int get(Map<String,Integer> m, String k) {
                     .append("\"colorEntropy\":").append(num(r.features.colorEntropy)).append(',')
                     .append("\"glowScore\":").append(num(r.features.glowScore)).append(',')
                     .append("\"hardLineScore\":").append(num(r.features.hardLineScore)).append(',')
+                    .append("\"tileRepetition\":").append(num(r.features.tileRepetition)).append(',')
+                    .append("\"pixelGridScore\":").append(num(r.features.pixelGridScore)).append(',')
+                    .append("\"textDensity\":").append(num(r.features.textDensity)).append(',')
+                    .append("\"symmetryScore\":").append(num(r.features.symmetryScore)).append(',')
+                    .append("\"softEdgeRatio\":").append(num(r.features.softEdgeRatio)).append(',')
                     .append("\"computeMs\":").append(r.features.computeTimeMs)
                     .append("},")
                     .append("\"top1_ok\":").append(r.top1Ok).append(',')
@@ -900,6 +905,11 @@ private static int get(Map<String,Integer> m, String k) {
         FeatureAgg entropy = new FeatureAgg();
         FeatureAgg glow = new FeatureAgg();
         FeatureAgg hard = new FeatureAgg();
+        FeatureAgg tile = new FeatureAgg();
+        FeatureAgg pixel = new FeatureAgg();
+        FeatureAgg text = new FeatureAgg();
+        FeatureAgg symmetry = new FeatureAgg();
+        FeatureAgg soft = new FeatureAgg();
         FeatureAgg ms = new FeatureAgg();
 
         for (ProfileRow r : rows) {
@@ -909,6 +919,11 @@ private static int get(Map<String,Integer> m, String k) {
             entropy.add(r.features.colorEntropy);
             glow.add(r.features.glowScore);
             hard.add(r.features.hardLineScore);
+            tile.add(r.features.tileRepetition);
+            pixel.add(r.features.pixelGridScore);
+            text.add(r.features.textDensity);
+            symmetry.add(r.features.symmetryScore);
+            soft.add(r.features.softEdgeRatio);
             ms.add((float) r.features.computeTimeMs);
         }
 
@@ -921,6 +936,11 @@ private static int get(Map<String,Integer> m, String k) {
         appendFeatureJson(b, "colorEntropy", entropy, true);
         appendFeatureJson(b, "glowScore", glow, true);
         appendFeatureJson(b, "hardLineScore", hard, true);
+        appendFeatureJson(b, "tileRepetition", tile, true);
+        appendFeatureJson(b, "pixelGridScore", pixel, true);
+        appendFeatureJson(b, "textDensity", text, true);
+        appendFeatureJson(b, "symmetryScore", symmetry, true);
+        appendFeatureJson(b, "softEdgeRatio", soft, true);
         appendFeatureJson(b, "computeMs", ms, false);
         b.append("\n}\n");
         return b.toString();
