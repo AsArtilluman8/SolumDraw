@@ -34,6 +34,10 @@ public final class ShadowClassRouter {
         addByPurpose(p);
         addByFeatures(p);
 
+        // Patch 27Y: keep old axis as a conservative prior.
+        // Shadow 27X improved top3 but slightly reduced axis accuracy.
+        addAxisPrior(p, DatasetClasses.axisOf(oldPredicted), 0.08f);
+
         List<Map.Entry<String, Float>> sorted = new ArrayList<>(p.classScores.entrySet());
         Collections.sort(sorted, new Comparator<Map.Entry<String, Float>>() {
             @Override public int compare(Map.Entry<String, Float> a, Map.Entry<String, Float> b) {
@@ -54,6 +58,12 @@ public final class ShadowClassRouter {
             if (!p.shadowTop3.contains(cls)) p.shadowTop3.add(cls);
         }
 
+        String axisSafeWinner = chooseAxisSafeWinner(p, oldPredicted, sorted);
+        if (axisSafeWinner.length() > 0 && p.shadowTop3.contains(axisSafeWinner)) {
+            p.shadowTop3.remove(axisSafeWinner);
+            p.shadowTop3.add(0, axisSafeWinner);
+        }
+
         if (!p.shadowTop3.isEmpty()) {
             p.shadowFinalClass = p.shadowTop3.get(0);
         }
@@ -62,6 +72,55 @@ public final class ShadowClassRouter {
         float second = scoreOf(p, p.shadowTop3.size() > 1 ? p.shadowTop3.get(1) : "");
         p.shadowConfidence = clamp01(first <= 0f ? 0f : (first - second) / Math.max(0.0001f, first + second));
         p.scoringDone = true;
+    }
+
+
+    private static void addAxisPrior(ImageProfile p, String axis, float boost) {
+        if (axis == null || axis.length() == 0 || "unknown".equals(axis)) return;
+        for (String cls : DatasetClasses.ALL) {
+            if (axis.equals(DatasetClasses.axisOf(cls))) {
+                add(p, cls, boost);
+            }
+        }
+    }
+
+    private static String chooseAxisSafeWinner(ImageProfile p, String oldPredicted, List<Map.Entry<String, Float>> sorted) {
+        if (p == null || sorted == null || sorted.isEmpty()) return "";
+
+        String oldAxis = DatasetClasses.axisOf(oldPredicted);
+        if (oldAxis == null || oldAxis.length() == 0 || "unknown".equals(oldAxis)) return "";
+
+        String topClass = "";
+        float topScore = 0f;
+
+        String bestOldAxisClass = "";
+        float bestOldAxisScore = 0f;
+
+        for (Map.Entry<String, Float> e : sorted) {
+            String cls = e.getKey();
+            if (!DatasetClasses.isValid(cls) || DatasetClasses.isForbidden(cls)) continue;
+
+            float score = e.getValue() == null ? 0f : e.getValue();
+
+            if (topClass.length() == 0) {
+                topClass = cls;
+                topScore = score;
+            }
+
+            if (oldAxis.equals(DatasetClasses.axisOf(cls)) && score > bestOldAxisScore) {
+                bestOldAxisClass = cls;
+                bestOldAxisScore = score;
+            }
+        }
+
+        if (topClass.length() == 0) return "";
+        if (oldAxis.equals(DatasetClasses.axisOf(topClass))) return topClass;
+        if (bestOldAxisClass.length() == 0) return topClass;
+
+        // Conservative rule: keep old-axis winner if it is reasonably close.
+        if (bestOldAxisScore >= topScore * 0.72f) return bestOldAxisClass;
+
+        return topClass;
     }
 
     private static void addByQuality(ImageProfile p) {
