@@ -1,5 +1,7 @@
 package com.solum.draw.vision;
 
+import com.solum.draw.vision.profile.DatasetClasses;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -150,9 +152,16 @@ public final class DatasetClassRouter {
 
         ArrayList<Candidate> list = new ArrayList<>();
         for (Map.Entry<String, Integer> e : scores.entrySet()) {
+            String cls = remapToDatasetClass(e.getKey());
+            if (DatasetClasses.isForbidden(cls) || !DatasetClasses.isValid(cls)) continue;
+
             int v = clamp(e.getValue(), 0, 100);
-            list.add(new Candidate(e.getKey(), v, reasons.get(e.getKey()).toString()));
+            StringBuilder rb = reasons.get(e.getKey());
+            String reason = rb == null ? "" : rb.toString();
+            list.add(new Candidate(cls, v, reason));
         }
+
+        dedupeCandidatesByClass(list);
 
         Collections.sort(list, new Comparator<Candidate>() {
             @Override public int compare(Candidate a, Candidate b) {
@@ -176,6 +185,24 @@ public final class DatasetClassRouter {
                 "top5: " + line;
 
         return new Route(win.name, win.score, top, summary, line.toString(), win.reason);
+    }
+
+
+    private static void dedupeCandidatesByClass(ArrayList<Candidate> list) {
+        LinkedHashMap<String, Candidate> best = new LinkedHashMap<>();
+
+        for (Candidate c : list) {
+            if (c == null) continue;
+            if (DatasetClasses.isForbidden(c.name) || !DatasetClasses.isValid(c.name)) continue;
+
+            Candidate old = best.get(c.name);
+            if (old == null || c.score > old.score) {
+                best.put(c.name, c);
+            }
+        }
+
+        list.clear();
+        list.addAll(best.values());
     }
 
     private static void antiBias(LinkedHashMap<String, Integer> s, LinkedHashMap<String, StringBuilder> r, String e) {
@@ -235,14 +262,44 @@ public final class DatasetClassRouter {
     }
 
     private static void put(LinkedHashMap<String, Integer> s, LinkedHashMap<String, StringBuilder> r, String cls, int delta, String why) {
+        cls = remapToDatasetClass(cls);
+
+        // Patch 29A: router candidates must be real dataset classes only.
+        // Internal/non-dataset labels may add evidence, but cannot become final classes.
+        if (DatasetClasses.isForbidden(cls) || !DatasetClasses.isValid(cls)) return;
+
         Integer old = s.get(cls);
         if (old == null) old = 0;
         s.put(cls, old + delta);
+
         StringBuilder b = r.get(cls);
         if (b != null) {
             if (b.length() > 0) b.append("; ");
             b.append(why);
         }
+    }
+
+    private static String remapToDatasetClass(String cls) {
+        if (cls == null) return "";
+        String c = cls.trim();
+
+        // Non-dataset object aliases.
+        if ("vehicle".equals(c)) return "product_object";
+        if ("weapon".equals(c)) return "product_object";
+        if ("food".equals(c)) return DatasetClasses.isValid("still_life") ? "still_life" : "product_object";
+        if ("fashion_clothing".equals(c)) return "human_body_fullbody";
+        if ("plant_flower".equals(c)) return "landscape_environment";
+        if ("thumbnail_cover".equals(c)) return "ui_screenshot";
+        if ("map".equals(c)) return "diagram_chart";
+
+        // Non-dataset scene/material aliases.
+        if ("interior_room".equals(c)) return "architecture_hardsurface";
+        if ("material_texture".equals(c)) return "texture_pattern";
+
+        // Internal fallback aliases.
+        if ("unknown".equals(c)) return "photo_general";
+
+        return c;
     }
 
     private static String extractEvidence(Object obj) {
