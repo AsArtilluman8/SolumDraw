@@ -101,7 +101,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
                 decision = VisionDecisionPostProcessor.refine(decision, ml.labels, ml.objects, hint);
 
                 String predicted = decision.datasetClass;
-                List<String> candidates = top3FromDecision(decision, analysis, predicted);
+                List<String> candidates = sanitizeTop3(top3FromDecision(decision, analysis, predicted), predicted);
 
                 boolean hasExpected = img.expected.length() > 0;
                 boolean ok1 = hasExpected && img.expected.equals(predicted);
@@ -209,6 +209,44 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
     }
 
     private static void add(List<String> list, String v) { if (v != null && v.length() > 0 && !list.contains(v)) list.add(v); }
+
+    private static List<String> sanitizeTop3(List<String> raw, String predicted) {
+        ArrayList<String> out = new ArrayList<>();
+
+        addValid(out, predicted);
+
+        if (raw != null) {
+            for (String x : raw) {
+                addValid(out, x);
+            }
+        }
+
+        // Axis-aware safe fillers. These are real dataset classes only.
+        if (predicted != null) {
+            String axis = DatasetClasses.axisOf(predicted);
+            for (String cls : DatasetClasses.ALL) {
+                if (out.size() >= 3) break;
+                if (axis.equals(DatasetClasses.axisOf(cls))) addValid(out, cls);
+            }
+        }
+
+        for (String cls : DatasetClasses.ALL) {
+            if (out.size() >= 3) break;
+            addValid(out, cls);
+        }
+
+        while (out.size() > 3) out.remove(out.size() - 1);
+        return out;
+    }
+
+    private static void addValid(List<String> out, String cls) {
+        if (cls == null) return;
+        cls = cls.trim();
+        if (DatasetClasses.isForbidden(cls)) return;
+        if (!DatasetClasses.isValid(cls)) return;
+        if (!out.contains(cls)) out.add(cls);
+    }
+
     private static boolean contains(List<String> list, String v) { for (String s : list) if (s.equals(v)) return true; return false; }
 
     private static Stats buildStats(List<ItemResult> items) {

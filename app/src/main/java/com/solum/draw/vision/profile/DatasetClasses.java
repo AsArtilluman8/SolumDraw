@@ -40,6 +40,7 @@ public final class DatasetClasses {
             "space_scifi_bg",
             "sprite_sheet",
             "sticker_chibi",
+            "still_life",
             "text_document",
             "texture_pattern",
             "transparent_layered",
@@ -102,6 +103,7 @@ public final class DatasetClasses {
         CLASS_TO_AXIS.put("vfx_glow_magic", "vfx_fx");
         CLASS_TO_AXIS.put("noisy_compressed", "quality_noise");
         CLASS_TO_AXIS.put("animal_creature", "animal_creature");
+        CLASS_TO_AXIS.put("still_life", "architecture_object");
         CLASS_TO_AXIS.put("photo_general", "unknown");
     }
 
