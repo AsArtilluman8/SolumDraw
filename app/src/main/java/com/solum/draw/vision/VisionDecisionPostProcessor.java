@@ -4,6 +4,7 @@ import java.lang.reflect.Field;
 import java.util.Locale;
 
 public final class VisionDecisionPostProcessor {
+    private static boolean ENABLED = false; // PATCH_27P_POSTPROCESSOR_LOCK
     private VisionDecisionPostProcessor() {}
 
     public static VisionDecisionEngine.Decision refine(
@@ -15,6 +16,7 @@ public final class VisionDecisionPostProcessor {
         // Patch 27P: disabled aggressive 27O calibration.
         // It collapsed too many classes into anime_manga and reduced full Bench from 13%/25% to 4%/6%.
         if (decision == null) return decision;
+        if (!ENABLED) return decision;
         if (true) return decision;
 
         String oldClass = safe(getStringField(decision, "datasetClass"));

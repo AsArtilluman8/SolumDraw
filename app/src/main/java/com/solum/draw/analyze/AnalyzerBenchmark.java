@@ -8,6 +8,7 @@ import com.solum.draw.vision.MlKitVisionProbe;
 import com.solum.draw.vision.VisionDecisionEngine;
 import com.solum.draw.vision.VisionDecisionPostProcessor;
 import com.solum.draw.vision.VisionResult;
+import com.solum.draw.vision.profile.DatasetClasses;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -114,6 +115,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         writeText(new File(outDir, "BENCHMARK_REPORT.md"), reportMd(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
         writeText(new File(outDir, "summary.txt"), reportMd(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
         writeText(new File(outDir, "errors.txt"), errorsText(errors));
+        writeText(new File(outDir, "benchmark_guards.md"), benchmarkGuardsMd(items, errors));
         writeText(new File(outDir, "axis_report.md"), axisReportMd(items));
         writeText(new File(outDir, "axis_report.csv"), axisReportCsv(items));
         writeText(new File(outDir, "class_report.csv"), classReportCsv(items));
@@ -708,6 +710,156 @@ private static int get(Map<String,Integer> m, String k) {
         int strictOk = 0;
         int axisOk = 0;
         final Map<String,Integer> predictedTo = new HashMap<>();
+    }
+
+
+    private static String benchmarkGuardsMd(List<ItemResult> items, List<String> errors) {
+        GuardStats g = buildGuardStats(items, errors);
+        StringBuilder b = new StringBuilder();
+
+        b.append("# SolumDraw Benchmark Guards\n\n");
+        b.append("This report detects benchmark regressions before they become real prediction changes.\n\n");
+
+        guardLine(b, "SINK_COLLAPSE",
+                g.maxClassShare <= 0.30f,
+                "max class share = " + guardPct(g.maxClassShare) + " (" + g.maxClassName + "), threshold <= 30%");
+
+        guardLine(b, "FORBIDDEN_IN_TOP3",
+                g.forbiddenTop3 == 0,
+                "forbidden tokens in top3 = " + g.forbiddenTop3);
+
+        guardLine(b, "TOP3_DIVERSITY",
+                g.top3Diversity >= 12,
+                "unique top3 classes = " + g.top3Diversity + ", threshold >= 12");
+
+        guardLine(b, "TOP3_INVALID_CLASS",
+                g.invalidTop3 == 0,
+                "invalid top3 classes = " + g.invalidTop3);
+
+        guardLine(b, "ERROR_RATE",
+                g.errorRate <= 0.10f,
+                "errors = " + g.errors + "/" + g.total + " = " + guardPct(g.errorRate) + ", threshold <= 10%");
+
+        b.append("\n## Class distribution\n\n");
+        for (Map.Entry<String,Integer> e : guardSorted(g.predictedCounts)) {
+            float share = g.total <= 0 ? 0f : e.getValue() / (float) g.total;
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue())
+                    .append(" / ").append(g.total)
+                    .append(" = ").append(guardPct(share)).append("\n");
+        }
+
+        b.append("\n## Top3 unique classes\n\n");
+        for (Map.Entry<String,Integer> e : guardSorted(g.top3Counts)) {
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+        }
+
+        if (!g.forbiddenExamples.isEmpty()) {
+            b.append("\n## Forbidden top3 examples\n\n");
+            for (String x : g.forbiddenExamples) b.append("- ").append(x).append("\n");
+        }
+
+        if (!g.invalidExamples.isEmpty()) {
+            b.append("\n## Invalid top3 examples\n\n");
+            for (String x : g.invalidExamples) b.append("- ").append(x).append("\n");
+        }
+
+        b.append("\n## Meaning\n\n");
+        b.append("- FAIL means this benchmark result should not be merged into prediction logic.\n");
+        b.append("- WARN/FAIL on sink collapse means one class is absorbing too much of the dataset.\n");
+        b.append("- FORBIDDEN_IN_TOP3 catches internal tokens such as calibrated/fallback/unknown.\n");
+        return b.toString();
+    }
+
+    private static GuardStats buildGuardStats(List<ItemResult> items, List<String> errors) {
+        GuardStats g = new GuardStats();
+        g.total = items == null ? 0 : items.size();
+        g.errors = errors == null ? 0 : errors.size();
+        g.errorRate = g.total <= 0 ? 0f : g.errors / (float) g.total;
+
+        if (items != null) {
+            for (ItemResult it : items) {
+                String predicted = it.predicted == null ? "" : it.predicted;
+                guardInc(g.predictedCounts, predicted);
+
+                if (it.top3 != null) {
+                    for (String t : it.top3) {
+                        String token = t == null ? "" : t.trim();
+                        guardInc(g.top3Counts, token);
+
+                        if (DatasetClasses.isForbidden(token)) {
+                            g.forbiddenTop3++;
+                            if (g.forbiddenExamples.size() < 30) {
+                                g.forbiddenExamples.add(it.name + " -> " + token);
+                            }
+                        }
+
+                        if (!DatasetClasses.isForbidden(token) && !DatasetClasses.isValid(token)) {
+                            g.invalidTop3++;
+                            if (g.invalidExamples.size() < 30) {
+                                g.invalidExamples.add(it.name + " -> " + token);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        g.top3Diversity = 0;
+        for (String k : g.top3Counts.keySet()) {
+            if (!DatasetClasses.isForbidden(k) && DatasetClasses.isValid(k)) g.top3Diversity++;
+        }
+
+        for (Map.Entry<String,Integer> e : g.predictedCounts.entrySet()) {
+            float share = g.total <= 0 ? 0f : e.getValue() / (float) g.total;
+            if (share > g.maxClassShare) {
+                g.maxClassShare = share;
+                g.maxClassName = e.getKey();
+            }
+        }
+
+        return g;
+    }
+
+    private static void guardLine(StringBuilder b, String name, boolean pass, String details) {
+        b.append(pass ? "[PASS] " : "[FAIL] ")
+                .append(name)
+                .append(": ")
+                .append(details)
+                .append("\n");
+    }
+
+    private static String guardPct(float v) {
+        return Math.round(v * 1000f) / 10f + "%";
+    }
+
+    private static void guardInc(Map<String,Integer> map, String key) {
+        Integer v = map.get(key);
+        map.put(key, v == null ? 1 : v + 1);
+    }
+
+    private static List<Map.Entry<String,Integer>> guardSorted(Map<String,Integer> m) {
+        List<Map.Entry<String,Integer>> e = new ArrayList<>(m.entrySet());
+        Collections.sort(e, new Comparator<Map.Entry<String,Integer>>() {
+            @Override public int compare(Map.Entry<String,Integer> a, Map.Entry<String,Integer> b) {
+                return b.getValue().compareTo(a.getValue());
+            }
+        });
+        return e;
+    }
+
+    private static final class GuardStats {
+        int total;
+        int errors;
+        float errorRate;
+        int forbiddenTop3;
+        int invalidTop3;
+        int top3Diversity;
+        float maxClassShare;
+        String maxClassName = "";
+        final Map<String,Integer> predictedCounts = new HashMap<>();
+        final Map<String,Integer> top3Counts = new HashMap<>();
+        final List<String> forbiddenExamples = new ArrayList<>();
+        final List<String> invalidExamples = new ArrayList<>();
     }
 
     private static String errorsText(List<String> errors) {
