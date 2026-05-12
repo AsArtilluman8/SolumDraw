@@ -9,12 +9,8 @@ public final class AxisScorer {
     public static void score(ImageProfile profile, Object labels, Object objects, String hint) {
         if (profile == null) return;
 
-        String bag = (
-                safe(hint) + " " +
-                flatten(labels) + " " +
-                flatten(objects) + " " +
-                safe(profile.rawPredicted)
-        ).toLowerCase(Locale.US);
+        String bag = (safe(hint) + " " + flatten(labels) + " " + flatten(objects) + " " + safe(profile.rawPredicted))
+                .toLowerCase(Locale.US);
 
         VisualFeatureVector f = profile.features == null ? new VisualFeatureVector() : profile.features;
 
@@ -27,50 +23,61 @@ public final class AxisScorer {
     }
 
     private static void scoreQuality(ImageProfile p, VisualFeatureVector f) {
-        if (f.sharpness < 0.35f && f.edgeDensity > 0.25f) {
+        if (f.sharpness < 0.30f && f.edgeDensity > 0.22f && f.colorEntropy > 0.55f) {
             p.qualityAxis = ImageAxes.QualityAxis.NOISY_COMPRESSED;
-            p.qualityAxisConf = clamp01((0.35f - f.sharpness) / 0.35f);
+            p.qualityAxisConf = 0.72f;
             return;
         }
-        if (f.sharpness < 0.28f) {
+
+        if (f.sharpness < 0.22f) {
             p.qualityAxis = ImageAxes.QualityAxis.SKETCH_ROUGH;
-            p.qualityAxisConf = clamp01((0.28f - f.sharpness) / 0.28f);
+            p.qualityAxisConf = 0.65f;
             return;
         }
+
         p.qualityAxis = ImageAxes.QualityAxis.CLEAN;
-        p.qualityAxisConf = clamp01(0.45f + f.sharpness * 0.45f);
+        p.qualityAxisConf = clamp01(0.55f + f.sharpness * 0.35f);
     }
 
     private static void scoreStyle(ImageProfile p, VisualFeatureVector f, String bag) {
-        float lineart = 0f, painterly = 0f, flat = 0f, pixel = 0f, photo = 0f, abs = 0f, textured = 0f;
+        float lineart = 0f;
+        float painterly = 0f;
+        float flat = 0f;
+        float pixel = 0f;
+        float photo = 0f;
+        float abs = 0f;
+        float textured = 0f;
 
-        if (f.edgeDensity > 0.35f) lineart += 0.35f;
-        if (f.hardLineScore > 0.35f) lineart += 0.25f;
-        if (f.saturation < 0.12f && f.edgeDensity > 0.18f) lineart += 0.20f;
+        if (f.edgeDensity > 0.34f) lineart += 0.38f;
+        if (f.hardLineScore > 0.32f) lineart += 0.28f;
+        if (f.saturation < 0.16f && f.edgeDensity > 0.16f) lineart += 0.18f;
+        if (hasAny(bag, "drawing", "sketch", "line art", "lineart", "pencil")) lineart += 0.34f;
 
-        if (f.edgeDensity < 0.28f) painterly += 0.25f;
-        if (f.colorEntropy > 0.45f) painterly += 0.20f;
-        if (f.glowScore > 0.18f) painterly += 0.20f;
-        if (hasAny(bag, "painting", "paint", "art", "illustration")) painterly += 0.18f;
+        if (f.softEdgeRatio > 0.48f && f.edgeDensity < 0.30f) painterly += 0.30f;
+        if (f.glowScore > 0.26f) painterly += 0.14f;
+        if (hasAny(bag, "painting", "watercolor", "oil painting")) painterly += 0.30f;
+        if (hasAny(bag, "art", "illustration")) painterly += 0.03f;
 
-        if (f.colorEntropy < 0.35f && f.saturation > 0.20f) flat += 0.25f;
-        if (hasAny(bag, "cartoon", "comic", "clip art", "vector", "graphic")) flat += 0.25f;
+        if (f.colorEntropy < 0.48f && f.saturation > 0.18f && f.softEdgeRatio < 0.50f) flat += 0.34f;
+        if (f.edgeDensity > 0.16f && f.edgeDensity < 0.40f && f.hardLineScore < 0.28f) flat += 0.13f;
+        if (hasAny(bag, "cartoon", "comic", "clip art", "vector", "graphic")) flat += 0.34f;
 
-        if (hasAny(bag, "pixel", "sprite", "8-bit", "8 bit")) pixel += 0.50f;
-        if (f.edgeDensity > 0.45f && f.colorEntropy < 0.40f) pixel += 0.15f;
+        if (f.pixelGridScore > 0.62f) pixel += 0.55f;
+        if (hasAny(bag, "pixel", "sprite", "8-bit", "8 bit")) pixel += 0.60f;
 
-        if (hasAny(bag, "photo", "photograph", "photography", "camera")) photo += 0.45f;
-        if (f.sharpness > 0.55f && f.edgeDensity < 0.24f) photo += 0.15f;
+        if (hasAny(bag, "photo", "photograph", "photography", "camera")) photo += 0.50f;
+        if (f.sharpness > 0.62f && f.edgeDensity < 0.18f && f.colorEntropy > 0.35f) photo += 0.16f;
 
-        if (f.colorEntropy > 0.68f && f.hardLineScore < 0.25f) abs += 0.35f;
-        if (hasAny(bag, "abstract")) abs += 0.40f;
+        if (f.colorEntropy > 0.70f && f.hardLineScore < 0.30f && f.edgeDensity < 0.38f) abs += 0.48f;
+        if (hasAny(bag, "abstract")) abs += 0.48f;
 
-        if (f.edgeDensity > 0.30f && f.colorEntropy > 0.55f) textured += 0.25f;
-        if (hasAny(bag, "texture", "pattern", "fabric", "wallpaper")) textured += 0.30f;
+        if (f.tileRepetition > 0.88f && f.colorEntropy > 0.45f) textured += 0.42f;
+        if (f.edgeDensity > 0.24f && f.colorEntropy > 0.52f && f.hardLineScore < 0.32f) textured += 0.24f;
+        if (hasAny(bag, "texture", "pattern", "fabric", "wallpaper", "seamless")) textured += 0.44f;
 
         float[] vals = new float[]{lineart, painterly, flat, pixel, photo, abs, textured};
         int best = bestIndex(vals);
-        if (vals[best] < 0.15f) {
+        if (vals[best] < 0.14f) {
             p.styleAxis = ImageAxes.StyleAxis.UNKNOWN;
             p.styleAxisConf = 0f;
             return;
@@ -90,41 +97,53 @@ public final class AxisScorer {
     }
 
     private static void scoreContent(ImageProfile p, VisualFeatureVector f, String bag) {
-        float character = 0f, creature = 0f, landscape = 0f, architecture = 0f, ui = 0f, diagram = 0f;
-        float logo = 0f, pattern = 0f, text = 0f, product = 0f, vfx = 0f;
+        float character = 0f;
+        float creature = 0f;
+        float landscape = 0f;
+        float architecture = 0f;
+        float ui = 0f;
+        float diagram = 0f;
+        float logo = 0f;
+        float pattern = 0f;
+        float text = 0f;
+        float product = 0f;
+        float vfx = 0f;
 
-        if (hasAny(bag, "person", "human", "face", "hair", "skin", "woman", "man", "portrait", "anime", "manga")) character += 0.45f;
-        if (hasAny(bag, "animal", "creature", "dog", "cat", "bird", "horse", "fish", "wolf")) creature += 0.55f;
+        if (hasAny(bag, "person", "human", "face", "hair", "skin", "woman", "man", "portrait", "anime", "manga")) character += 0.58f;
+        if (f.symmetryScore > 0.68f && f.saturation > 0.12f && f.hardLineScore < 0.40f) character += 0.12f;
 
-        if (hasAny(bag, "landscape", "mountain", "forest", "sky", "tree", "river", "lake", "sea", "nature")) landscape += 0.45f;
-        if (f.colorEntropy > 0.45f && f.hardLineScore < 0.25f && f.edgeDensity < 0.35f) landscape += 0.15f;
+        if (hasAny(bag, "animal", "creature", "dog", "cat", "bird", "horse", "fish", "wolf")) creature += 0.64f;
 
-        if (hasAny(bag, "architecture", "building", "house", "tower", "castle", "room", "window", "door")) architecture += 0.45f;
-        if (f.hardLineScore > 0.35f) architecture += 0.35f;
+        if (hasAny(bag, "landscape", "mountain", "forest", "sky", "tree", "river", "lake", "sea", "nature")) landscape += 0.58f;
+        if (f.colorEntropy > 0.45f && f.hardLineScore < 0.22f && f.edgeDensity < 0.32f) landscape += 0.28f;
 
-        if (hasAny(bag, "screenshot", "screen", "app", "mobile", "interface", "button", "menu", "toolbar")) ui += 0.45f;
-        if (f.hardLineScore > 0.30f && f.edgeDensity > 0.20f) ui += 0.18f;
+        if (hasAny(bag, "architecture", "building", "house", "tower", "castle", "room", "window", "door")) architecture += 0.64f;
+        if (f.hardLineScore > 0.34f && f.textDensity < 0.90f) architecture += 0.44f;
 
-        if (hasAny(bag, "diagram", "chart", "graph", "arrow", "flow", "infographic")) diagram += 0.55f;
-        if (f.hardLineScore > 0.45f && f.saturation < 0.25f) diagram += 0.18f;
+        if (hasAny(bag, "screenshot", "screen", "app", "mobile", "interface", "button", "menu", "toolbar")) ui += 0.62f;
+        if (f.hardLineScore > 0.30f && f.textDensity > 0.82f) ui += 0.38f;
 
-        if (hasAny(bag, "logo", "icon", "symbol", "emblem")) logo += 0.55f;
-        if (f.colorEntropy < 0.30f && f.edgeDensity > 0.18f) logo += 0.12f;
+        if (hasAny(bag, "diagram", "chart", "graph", "arrow", "flow", "infographic")) diagram += 0.68f;
+        if (f.hardLineScore > 0.42f && f.saturation < 0.34f && f.textDensity > 0.70f) diagram += 0.36f;
 
-        if (hasAny(bag, "pattern", "texture", "seamless", "wallpaper", "ornament")) pattern += 0.55f;
-        if (f.edgeDensity > 0.30f && f.colorEntropy > 0.50f && f.hardLineScore < 0.25f) pattern += 0.12f;
+        if (hasAny(bag, "logo", "icon", "symbol", "emblem")) logo += 0.66f;
+        if (f.symmetryScore > 0.72f && f.colorEntropy < 0.44f && f.edgeDensity > 0.14f) logo += 0.34f;
 
-        if (hasAny(bag, "text", "document", "paper", "font", "letter", "writing")) text += 0.55f;
+        if (hasAny(bag, "pattern", "texture", "seamless", "wallpaper", "ornament")) pattern += 0.68f;
+        if (f.tileRepetition > 0.88f && f.hardLineScore < 0.32f) pattern += 0.42f;
 
-        if (hasAny(bag, "product", "object", "tool", "item")) product += 0.35f;
-        if (f.edgeDensity > 0.18f && f.hardLineScore < 0.20f && f.colorEntropy < 0.55f) product += 0.12f;
+        if (hasAny(bag, "text", "document", "paper", "font", "letter", "writing")) text += 0.66f;
+        if (f.textDensity > 0.90f && f.saturation < 0.25f) text += 0.30f;
 
-        if (hasAny(bag, "glow", "magic", "fire", "flame", "energy", "lightning", "neon", "laser")) vfx += 0.55f;
-        if (f.glowScore > 0.28f) vfx += 0.45f;
+        if (hasAny(bag, "product", "object", "tool", "item")) product += 0.44f;
+        if (f.edgeDensity > 0.16f && f.hardLineScore < 0.20f && f.colorEntropy < 0.55f && f.symmetryScore < 0.72f) product += 0.20f;
+
+        if (hasAny(bag, "glow", "magic", "fire", "flame", "energy", "lightning", "neon", "laser")) vfx += 0.70f;
+        if (f.glowScore > 0.20f) vfx += 0.62f;
 
         float[] vals = new float[]{character, creature, landscape, architecture, ui, diagram, logo, pattern, text, product, vfx};
         int best = bestIndex(vals);
-        if (vals[best] < 0.15f) {
+        if (vals[best] < 0.14f) {
             p.contentAxis = ImageAxes.ContentAxis.UNKNOWN;
             p.contentAxisConf = 0f;
             return;
@@ -148,20 +167,31 @@ public final class AxisScorer {
     }
 
     private static void scorePurpose(ImageProfile p, VisualFeatureVector f, String bag) {
-        float illustration = 0.22f, reference = 0f, ui = 0f, document = 0f, game = 0f, decorative = 0f;
+        float illustration = 0.20f;
+        float reference = 0f;
+        float ui = 0f;
+        float document = 0f;
+        float game = 0f;
+        float decorative = 0f;
 
-        if (hasAny(bag, "photo", "camera", "photograph")) reference += 0.45f;
-        if (hasAny(bag, "screenshot", "app", "interface", "screen", "mobile")) ui += 0.50f;
-        if (hasAny(bag, "document", "text", "paper", "letter", "font")) document += 0.50f;
-        if (hasAny(bag, "game", "hud", "sprite", "asset", "icon")) game += 0.40f;
-        if (hasAny(bag, "pattern", "texture", "wallpaper", "decorative", "ornament")) decorative += 0.45f;
+        if (hasAny(bag, "photo", "camera", "photograph")) reference += 0.52f;
+        if (hasAny(bag, "screenshot", "app", "interface", "screen", "mobile")) ui += 0.58f;
+        if (f.hardLineScore > 0.30f && f.textDensity > 0.82f) ui += 0.25f;
 
-        if (f.hardLineScore > 0.35f && f.edgeDensity > 0.20f) ui += 0.12f;
-        if (f.colorEntropy > 0.55f && f.hardLineScore < 0.25f) illustration += 0.10f;
+        if (hasAny(bag, "document", "text", "paper", "letter", "font")) document += 0.58f;
+        if (f.textDensity > 0.90f && f.saturation < 0.25f) document += 0.30f;
+
+        if (hasAny(bag, "game", "hud", "sprite", "asset", "icon")) game += 0.50f;
+        if (f.pixelGridScore > 0.60f) game += 0.28f;
+
+        if (hasAny(bag, "pattern", "texture", "wallpaper", "decorative", "ornament")) decorative += 0.52f;
+        if (f.tileRepetition > 0.88f) decorative += 0.28f;
+
+        if (f.colorEntropy > 0.55f && f.hardLineScore < 0.25f) illustration += 0.12f;
 
         float[] vals = new float[]{illustration, reference, ui, document, game, decorative};
         int best = bestIndex(vals);
-        if (vals[best] < 0.15f) {
+        if (vals[best] < 0.14f) {
             p.purposeAxis = ImageAxes.PurposeAxis.UNKNOWN;
             p.purposeAxisConf = 0f;
             return;
@@ -198,12 +228,13 @@ public final class AxisScorer {
         }
         b.append(' ').append(String.valueOf(obj));
         Field[] fields = cls.getDeclaredFields();
-        for (Field f : fields) {
+        for (Field field : fields) {
             try {
-                f.setAccessible(true);
-                Object v = f.get(obj);
+                field.setAccessible(true);
+                Object v = field.get(obj);
                 if (v != obj) b.append(' ').append(String.valueOf(v));
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -220,13 +251,21 @@ public final class AxisScorer {
     }
 
     private static float confidence(float[] vals) {
-        float best = 0f, second = 0f;
+        float best = 0f;
+        float second = 0f;
         for (float v : vals) {
-            if (v > best) { second = best; best = v; }
-            else if (v > second) second = v;
+            if (v > best) {
+                second = best;
+                best = v;
+            } else if (v > second) {
+                second = v;
+            }
         }
-        if (best < 0.15f) return 0f;
-        return clamp01((best - second) / Math.max(0.0001f, best + second));
+        if (best < 0.14f) return 0f;
+
+        float gap = (best - second) / Math.max(0.0001f, best + second);
+        float absolute = Math.min(0.35f, best * 0.35f);
+        return clamp01(gap + absolute);
     }
 
     private static float clamp01(float v) {
