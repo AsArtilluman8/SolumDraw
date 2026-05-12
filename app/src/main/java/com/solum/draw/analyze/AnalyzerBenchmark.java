@@ -9,6 +9,7 @@ import com.solum.draw.vision.VisionDecisionEngine;
 import com.solum.draw.vision.VisionDecisionPostProcessor;
 import com.solum.draw.vision.VisionResult;
 import com.solum.draw.vision.profile.DatasetClasses;
+import com.solum.draw.vision.profile.ImageProfile;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -107,6 +108,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
             if (progress != null) progress.onItem(i + 1, images.size(), img.relativeName, top1, top3, missingLabels);
         }
 
+        touchImageProfileFoundation();
         Stats stats = buildStats(items);
         writeText(new File(outDir, "benchmark_results.csv"), resultsCsv(items));
         writeText(new File(outDir, "mistakes.csv"), mistakesCsv(items));
@@ -712,6 +714,12 @@ private static int get(Map<String,Integer> m, String k) {
         final Map<String,Integer> predictedTo = new HashMap<>();
     }
 
+
+    private static void touchImageProfileFoundation() {
+        // Patch 27Q compile guard only. No prediction behavior change.
+        ImageProfile ignored = new ImageProfile();
+        ignored.resetShadow();
+    }
 
     private static String benchmarkGuardsMd(List<ItemResult> items, List<String> errors) {
         GuardStats g = buildGuardStats(items, errors);
