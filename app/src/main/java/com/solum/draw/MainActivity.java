@@ -37,6 +37,8 @@ import com.solum.draw.preview.StrokePreviewView;
 import com.solum.draw.vision.MlKitVisionProbe;
 import com.solum.draw.vision.VisionResult;
 import com.solum.draw.vision.VisionDecisionEngine;
+import com.solum.draw.vision.profile.VisualFeatureExtractor;
+import com.solum.draw.vision.profile.VisualFeatureVector;
 import com.solum.draw.reconstruct.ErrorMap;
 import com.solum.draw.reconstruct.ReconstructionMetrics;
 import com.solum.draw.reconstruct.ResidualPlanner;
@@ -263,17 +265,37 @@ public final class MainActivity extends Activity {
                 lastMlVisionResult = result;
                 String routerDebug = "";
                 String routerHint = "ui_ml_probe";
+                VisualFeatureVector routerFeatures = new VisualFeatureVector();
+
+                try {
+                    routerFeatures = VisualFeatureExtractor.extract(sourceImage);
+                } catch (Throwable ignored) {
+                    routerFeatures = new VisualFeatureVector();
+                }
+
                 try {
                     ImageAnalysis quickAnalysis = ImageAnalyzer.analyze(sourceImage, "ml_ui_probe");
                     routerHint = quickAnalysis.genre + " " + quickAnalysis.warnings + " "
                             + SceneArtHeuristic.correctedGenre(quickAnalysis) + " "
-                            + SceneArtHeuristic.note(quickAnalysis);
+                            + SceneArtHeuristic.note(quickAnalysis)
+                            + " features glow=" + routerFeatures.glowScore
+                            + " pixelGrid=" + routerFeatures.pixelGridScore
+                            + " tile=" + routerFeatures.tileRepetition
+                            + " text=" + routerFeatures.textDensity
+                            + " hardLine=" + routerFeatures.hardLineScore
+                            + " softEdge=" + routerFeatures.softEdgeRatio;
                 } catch (Throwable ignored) {
-                    routerHint = "ui_ml_probe image_analyzer_hint_unavailable";
+                    routerHint = "ui_ml_probe image_analyzer_hint_unavailable"
+                            + " features glow=" + routerFeatures.glowScore
+                            + " pixelGrid=" + routerFeatures.pixelGridScore
+                            + " tile=" + routerFeatures.tileRepetition
+                            + " text=" + routerFeatures.textDensity
+                            + " hardLine=" + routerFeatures.hardLineScore
+                            + " softEdge=" + routerFeatures.softEdgeRatio;
                 }
 
                 try {
-                    routerDebug = VisionDecisionEngine.uiBlock(result.labels, result.objects, routerHint, "ui_ml_probe");
+                    routerDebug = VisionDecisionEngine.uiBlock(result.labels, result.objects, routerHint, "ui_ml_probe", routerFeatures);
                 } catch (Throwable err) {
                     routerDebug = "router_debug_error: " + err.getClass().getSimpleName() + ": " + err.getMessage();
                 }

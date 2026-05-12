@@ -30,6 +30,10 @@ public final class VisionDecisionEngine {
     private VisionDecisionEngine() {}
 
     public static Decision analyze(Object labels, Object objects, String jsonHint, String extraHint) {
+        return analyze(labels, objects, jsonHint, extraHint, null);
+    }
+
+    public static Decision analyze(Object labels, Object objects, String jsonHint, String extraHint, VisualFeatureVector features) {
         String hint = safe(jsonHint) + " " + safe(extraHint);
 
         DatasetClassRouter.Route route = DatasetClassRouter.route(labels, objects, hint);
@@ -49,11 +53,16 @@ public final class VisionDecisionEngine {
                 "router_reason: " + cut(route.reason, 260);
 
         Decision oldDecision = new Decision(route.predicted, route.confidence, summary, topLine, route.reason);
-        return maybeUseClassRouterForPredict(oldDecision, labels, objects, hint);
+        return maybeUseClassRouterForPredict(oldDecision, labels, objects, hint, features);
     }
 
     public static String uiBlock(Object labels, Object objects, String jsonHint, String extraHint) {
         Decision d = analyze(labels, objects, jsonHint, extraHint);
+        return d.summary;
+    }
+
+    public static String uiBlock(Object labels, Object objects, String jsonHint, String extraHint, VisualFeatureVector features) {
+        Decision d = analyze(labels, objects, jsonHint, extraHint, features);
         return d.summary;
     }
 
@@ -66,14 +75,15 @@ public final class VisionDecisionEngine {
             Decision oldDecision,
             Object labels,
             Object objects,
-            String hint
+            String hint,
+            VisualFeatureVector features
     ) {
         if (!VisionRouterConfig.USE_CLASS_ROUTER_FOR_PREDICT) return oldDecision;
         if (oldDecision == null) return oldDecision;
 
         try {
             ImageProfile profile = new ImageProfile();
-            profile.features = new VisualFeatureVector();
+            profile.features = features == null ? new VisualFeatureVector() : features;
             profile.rawPredicted = oldDecision.datasetClass;
 
             AxisScorer.score(profile, labels, objects, hint);
