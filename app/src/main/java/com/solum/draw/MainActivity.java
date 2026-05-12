@@ -262,10 +262,20 @@ public final class MainActivity extends Activity {
             @Override public void onResult(VisionResult result) {
                 lastMlVisionResult = result;
                 String routerDebug = "";
+                String routerHint = "ui_ml_probe";
                 try {
-                    routerDebug = VisionDecisionEngine.uiBlock(result.labels, result.objects, "", "ui_ml_probe");
+                    ImageAnalysis quickAnalysis = ImageAnalyzer.analyze(sourceImage, "ml_ui_probe");
+                    routerHint = quickAnalysis.genre + " " + quickAnalysis.warnings + " "
+                            + SceneArtHeuristic.correctedGenre(quickAnalysis) + " "
+                            + SceneArtHeuristic.note(quickAnalysis);
                 } catch (Throwable ignored) {
-                    routerDebug = "router_debug: unavailable";
+                    routerHint = "ui_ml_probe image_analyzer_hint_unavailable";
+                }
+
+                try {
+                    routerDebug = VisionDecisionEngine.uiBlock(result.labels, result.objects, routerHint, "ui_ml_probe");
+                } catch (Throwable err) {
+                    routerDebug = "router_debug_error: " + err.getClass().getSimpleName() + ": " + err.getMessage();
                 }
 
                 final String finalRouterDebug = routerDebug;
