@@ -36,6 +36,7 @@ import com.solum.draw.planner.StrokePlanJson;
 import com.solum.draw.preview.StrokePreviewView;
 import com.solum.draw.vision.MlKitVisionProbe;
 import com.solum.draw.vision.VisionResult;
+import com.solum.draw.vision.VisionDecisionEngine;
 import com.solum.draw.reconstruct.ErrorMap;
 import com.solum.draw.reconstruct.ReconstructionMetrics;
 import com.solum.draw.reconstruct.ResidualPlanner;
@@ -260,10 +261,20 @@ public final class MainActivity extends Activity {
         MlKitVisionProbe.analyze(sourceImage, new MlKitVisionProbe.Callback() {
             @Override public void onResult(VisionResult result) {
                 lastMlVisionResult = result;
-                RuntimeLog.line("mlkit_probe", result.summaryRu());
+                String routerDebug = "";
+                try {
+                    routerDebug = VisionDecisionEngine.uiBlock(result.labels, result.objects, "", "ui_ml_probe");
+                } catch (Throwable ignored) {
+                    routerDebug = "router_debug: unavailable";
+                }
+
+                final String finalRouterDebug = routerDebug;
+                RuntimeLog.line("mlkit_probe", result.summaryRu() + " | " + finalRouterDebug);
                 runOnUiThread(() -> {
                     previewView.setMlVisionResult(result);
-                    status.setText(result.summaryRu() + "\nЕсли bbox пустые: модель могла ещё догружаться, попробуй ML ещё раз через минуту.");
+                    status.setText(result.summaryRu()
+                            + "\n\nRouter predict:\n" + finalRouterDebug
+                            + "\n\nЕсли bbox пустые: модель могла ещё догружаться, попробуй ML ещё раз через минуту.");
                 });
                 backgroundBusy = false;
             }
