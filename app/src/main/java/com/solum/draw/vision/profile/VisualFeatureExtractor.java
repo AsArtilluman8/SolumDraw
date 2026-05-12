@@ -88,7 +88,7 @@ public final class VisualFeatureExtractor {
 
         boolean[] edge = new boolean[w * h];
         int edgeCount = 0;
-        final int threshold = 30;
+        final int threshold = 55;
 
         for (int y = 1; y < h - 1; y++) {
             int row = y * w;
@@ -105,7 +105,9 @@ public final class VisualFeatureExtractor {
         }
 
         float raw = edgeCount / (float) Math.max(1, (w - 2) * (h - 2));
-        st.edgeDensity = clamp01(raw / 0.50f);
+        // Patch 27S: keep edge density closer to true pixel ratio.
+        // Previous /0.50 normalization saturated many images at 1.0.
+        st.edgeDensity = clamp01(raw);
 
         int longRuns = 0;
         int minHRun = Math.max(8, Math.round(w * 0.15f));
@@ -135,7 +137,8 @@ public final class VisualFeatureExtractor {
             if (run >= minVRun) longRuns++;
         }
 
-        st.hardLineScore = clamp01(longRuns / 20f);
+        // Patch 27S: long runs were saturating too often on dense edge maps.
+        st.hardLineScore = clamp01(longRuns / 80f);
         return st;
     }
 
@@ -160,7 +163,8 @@ public final class VisualFeatureExtractor {
         if (n <= 0) return 0f;
         double mean = sum / n;
         double variance = (sum2 / n) - (mean * mean);
-        return clamp01((float) (variance / 1000.0));
+        // Patch 27S: log normalization prevents almost every sharp image from becoming 1.0.
+        return clamp01((float) (Math.log1p(Math.max(0.0, variance)) / Math.log1p(20000.0)));
     }
 
     private static float hueEntropy(int[] bins, int total) {
