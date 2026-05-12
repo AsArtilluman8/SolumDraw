@@ -9,6 +9,8 @@ import com.solum.draw.vision.VisionDecisionEngine;
 import com.solum.draw.vision.VisionDecisionPostProcessor;
 import com.solum.draw.vision.VisionResult;
 import com.solum.draw.vision.profile.DatasetClasses;
+import com.solum.draw.vision.profile.AxisScorer;
+import com.solum.draw.vision.profile.ImageAxes;
 import com.solum.draw.vision.profile.ImageProfile;
 import com.solum.draw.vision.profile.VisualFeatureExtractor;
 import com.solum.draw.vision.profile.VisualFeatureVector;
@@ -78,6 +80,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
 
         List<ItemResult> items = new ArrayList<>();
         List<ProfileRow> profileRows = new ArrayList<>();
+        List<AxisRow> axisRows = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         int top1 = 0, top3 = 0, missingLabels = 0;
 
@@ -107,6 +110,12 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
                 if (ok3) top3++;
                 items.add(new ItemResult(img.relativeName, img.expected, img.secondary, analysis, oldPredicted, predicted, decision.topLine, decision.reason, ml.provider, note, candidates, ok1, ok3, hasExpected));
                 profileRows.add(new ProfileRow(img.relativeName, img.expected, DatasetClasses.axisOf(img.expected), predicted, DatasetClasses.axisOf(predicted), features, analysis, candidates, ok1, ok3, hasExpected));
+                ImageProfile axisProfile = new ImageProfile();
+                axisProfile.imagePath = img.relativeName;
+                axisProfile.features = features;
+                axisProfile.rawPredicted = predicted;
+                AxisScorer.score(axisProfile, ml.labels, ml.objects, hint);
+                axisRows.add(new AxisRow(img.relativeName, img.expected, predicted, axisProfile));
             } catch (Exception e) {
                 errors.add(img.relativeName + "\t" + e.getClass().getSimpleName() + "\t" + String.valueOf(e.getMessage()));
             }
@@ -119,6 +128,8 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         writeText(new File(outDir, "profile_features.csv"), profileFeaturesCsv(profileRows));
         writeText(new File(outDir, "profile_predictions.jsonl"), profilePredictionsJsonl(profileRows));
         writeText(new File(outDir, "feature_summary.json"), featureSummaryJson(profileRows));
+        writeText(new File(outDir, "profile_axes.csv"), profileAxesCsv(axisRows));
+        writeText(new File(outDir, "axis_distribution.md"), axisDistributionMd(axisRows));
         writeText(new File(outDir, "mistakes.csv"), mistakesCsv(items));
         writeText(new File(outDir, "predictions.jsonl"), predictionsJsonl(items));
         writeText(new File(outDir, "benchmark_summary.json"), summaryJson(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
@@ -729,6 +740,112 @@ private static int get(Map<String,Integer> m, String k) {
         ignored.resetShadow();
     }
 
+
+
+    private static String profileAxesCsv(List<AxisRow> rows) {
+        StringBuilder b = new StringBuilder();
+        b.append("file,true_class,predicted,styleAxis,styleConf,contentAxis,contentConf,purposeAxis,purposeConf,qualityAxis,qualityConf\n");
+        for (AxisRow r : rows) {
+            ImageProfile p = r.profile;
+            b.append(csv(r.file)).append(',')
+                    .append(csv(r.trueClass)).append(',')
+                    .append(csv(r.predicted)).append(',')
+                    .append(csv(String.valueOf(p.styleAxis))).append(',')
+                    .append(num(p.styleAxisConf)).append(',')
+                    .append(csv(String.valueOf(p.contentAxis))).append(',')
+                    .append(num(p.contentAxisConf)).append(',')
+                    .append(csv(String.valueOf(p.purposeAxis))).append(',')
+                    .append(num(p.purposeAxisConf)).append(',')
+                    .append(csv(String.valueOf(p.qualityAxis))).append(',')
+                    .append(num(p.qualityAxisConf)).append('\n');
+        }
+        return b.toString();
+    }
+
+    private static String axisDistributionMd(List<AxisRow> rows) {
+        Map<String,Integer> style = new HashMap<>();
+        Map<String,Integer> content = new HashMap<>();
+        Map<String,Integer> purpose = new HashMap<>();
+        Map<String,Integer> quality = new HashMap<>();
+
+        int lowStyle = 0, lowContent = 0, lowPurpose = 0, lowQuality = 0;
+
+        for (AxisRow r : rows) {
+            ImageProfile p = r.profile;
+            inc(style, String.valueOf(p.styleAxis));
+            inc(content, String.valueOf(p.contentAxis));
+            inc(purpose, String.valueOf(p.purposeAxis));
+            inc(quality, String.valueOf(p.qualityAxis));
+
+            if (p.styleAxisConf < 0.25f) lowStyle++;
+            if (p.contentAxisConf < 0.25f) lowContent++;
+            if (p.purposeAxisConf < 0.25f) lowPurpose++;
+            if (p.qualityAxisConf < 0.25f) lowQuality++;
+        }
+
+        StringBuilder b = new StringBuilder();
+        b.append("# AxisScorer Debug Distribution\n\n");
+        b.append("AxisScorer is shadow/debug only. It does not change prediction.\n\n");
+        axisGuardBlock(b, "StyleAxis", style, rows.size(), lowStyle);
+        axisGuardBlock(b, "ContentAxis", content, rows.size(), lowContent);
+        axisGuardBlock(b, "PurposeAxis", purpose, rows.size(), lowPurpose);
+        axisGuardBlock(b, "QualityAxis", quality, rows.size(), lowQuality);
+        return b.toString();
+    }
+
+    private static void axisGuardBlock(StringBuilder b, String name, Map<String,Integer> counts, int total, int lowConf) {
+        b.append("## ").append(name).append("\n\n");
+        String maxName = "";
+        int max = 0;
+        int unknown = 0;
+
+        for (Map.Entry<String,Integer> e : counts.entrySet()) {
+            if (e.getValue() > max) {
+                max = e.getValue();
+                maxName = e.getKey();
+            }
+            if ("UNKNOWN".equals(e.getKey())) unknown = e.getValue();
+        }
+
+        float maxShare = total <= 0 ? 0f : max / (float) total;
+        float unknownShare = total <= 0 ? 0f : unknown / (float) total;
+        float lowShare = total <= 0 ? 0f : lowConf / (float) total;
+
+        b.append(maxShare > 0.60f ? "[WARN] " : "[PASS] ")
+                .append("AXIS_COLLAPSE: max=")
+                .append(maxName).append(" ")
+                .append(Math.round(maxShare * 1000f) / 10f).append("%, threshold <= 60%\n");
+
+        b.append(unknownShare > 0.40f ? "[WARN] " : "[PASS] ")
+                .append("UNKNOWN_RATE: ")
+                .append(Math.round(unknownShare * 1000f) / 10f).append("%, threshold <= 40%\n");
+
+        b.append(lowShare > 0.50f ? "[WARN] " : "[PASS] ")
+                .append("LOW_CONF_RATE: ")
+                .append(Math.round(lowShare * 1000f) / 10f).append("%, threshold <= 50%\n\n");
+
+        for (Map.Entry<String,Integer> e : sorted(counts)) {
+            float share = total <= 0 ? 0f : e.getValue() / (float) total;
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue())
+                    .append(" / ").append(total)
+                    .append(" = ").append(Math.round(share * 1000f) / 10f).append("%\n");
+        }
+        b.append('\n');
+    }
+
+    private static final class AxisRow {
+        final String file;
+        final String trueClass;
+        final String predicted;
+        final ImageProfile profile;
+
+        AxisRow(String file, String trueClass, String predicted, ImageProfile profile) {
+            this.file = file;
+            this.trueClass = trueClass;
+            this.predicted = predicted;
+            this.profile = profile;
+        }
+    }
 
     private static String profileFeaturesCsv(List<ProfileRow> rows) {
         StringBuilder b = new StringBuilder();
