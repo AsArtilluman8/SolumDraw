@@ -12,6 +12,7 @@ import com.solum.draw.vision.profile.DatasetClasses;
 import com.solum.draw.vision.profile.AxisScorer;
 import com.solum.draw.vision.profile.ImageAxes;
 import com.solum.draw.vision.profile.ImageProfile;
+import com.solum.draw.vision.profile.ShadowClassRouter;
 import com.solum.draw.vision.profile.VisualFeatureExtractor;
 import com.solum.draw.vision.profile.VisualFeatureVector;
 import java.io.BufferedReader;
@@ -115,7 +116,8 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
                 axisProfile.features = features;
                 axisProfile.rawPredicted = predicted;
                 AxisScorer.score(axisProfile, ml.labels, ml.objects, hint);
-                axisRows.add(new AxisRow(img.relativeName, img.expected, predicted, axisProfile));
+                ShadowClassRouter.route(axisProfile, predicted, candidates);
+                axisRows.add(new AxisRow(img.relativeName, img.expected, predicted, candidates, axisProfile));
             } catch (Exception e) {
                 errors.add(img.relativeName + "\t" + e.getClass().getSimpleName() + "\t" + String.valueOf(e.getMessage()));
             }
@@ -130,6 +132,8 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         writeText(new File(outDir, "feature_summary.json"), featureSummaryJson(profileRows));
         writeText(new File(outDir, "profile_axes.csv"), profileAxesCsv(axisRows));
         writeText(new File(outDir, "axis_distribution.md"), axisDistributionMd(axisRows));
+        writeText(new File(outDir, "old_vs_shadow.csv"), oldVsShadowCsv(axisRows));
+        writeText(new File(outDir, "shadow_router_report.md"), shadowRouterReportMd(axisRows));
         writeText(new File(outDir, "mistakes.csv"), mistakesCsv(items));
         writeText(new File(outDir, "predictions.jsonl"), predictionsJsonl(items));
         writeText(new File(outDir, "benchmark_summary.json"), summaryJson(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
@@ -742,6 +746,115 @@ private static int get(Map<String,Integer> m, String k) {
 
 
 
+
+    private static String oldVsShadowCsv(List<AxisRow> rows) {
+        StringBuilder b = new StringBuilder();
+        b.append("file,true_class,old_predicted,old_top3,shadow_predicted,shadow_top3,old_top1,shadow_top1,old_top3_ok,shadow_top3_ok,old_axis_ok,shadow_axis_ok,shadow_conf,styleAxis,contentAxis,purposeAxis,qualityAxis\n");
+        for (AxisRow r : rows) {
+            ImageProfile p = r.profile;
+            boolean oldTop1 = r.trueClass != null && r.trueClass.equals(r.predicted);
+            boolean shadowTop1 = r.trueClass != null && r.trueClass.equals(p.shadowFinalClass);
+            boolean oldTop3 = listContains(r.oldTop3, r.trueClass);
+            boolean shadowTop3 = listContains(p.shadowTop3, r.trueClass);
+            boolean oldAxis = DatasetClasses.axisOf(r.trueClass).equals(DatasetClasses.axisOf(r.predicted));
+            boolean shadowAxis = DatasetClasses.axisOf(r.trueClass).equals(DatasetClasses.axisOf(p.shadowFinalClass));
+
+            b.append(csv(r.file)).append(',')
+                    .append(csv(r.trueClass)).append(',')
+                    .append(csv(r.predicted)).append(',')
+                    .append(csv(join(r.oldTop3))).append(',')
+                    .append(csv(p.shadowFinalClass)).append(',')
+                    .append(csv(join(p.shadowTop3))).append(',')
+                    .append(oldTop1).append(',')
+                    .append(shadowTop1).append(',')
+                    .append(oldTop3).append(',')
+                    .append(shadowTop3).append(',')
+                    .append(oldAxis).append(',')
+                    .append(shadowAxis).append(',')
+                    .append(num(p.shadowConfidence)).append(',')
+                    .append(csv(String.valueOf(p.styleAxis))).append(',')
+                    .append(csv(String.valueOf(p.contentAxis))).append(',')
+                    .append(csv(String.valueOf(p.purposeAxis))).append(',')
+                    .append(csv(String.valueOf(p.qualityAxis))).append('\n');
+        }
+        return b.toString();
+    }
+
+    private static String shadowRouterReportMd(List<AxisRow> rows) {
+        int total = 0;
+        int oldTop1 = 0, shadowTop1 = 0;
+        int oldTop3 = 0, shadowTop3 = 0;
+        int oldAxis = 0, shadowAxis = 0;
+        Map<String,Integer> shadowDist = new HashMap<>();
+        Map<String,Integer> top3Dist = new HashMap<>();
+
+        for (AxisRow r : rows) {
+            if (r.trueClass == null || r.trueClass.length() == 0) continue;
+            ImageProfile p = r.profile;
+            total++;
+            if (r.trueClass.equals(r.predicted)) oldTop1++;
+            if (r.trueClass.equals(p.shadowFinalClass)) shadowTop1++;
+            if (listContains(r.oldTop3, r.trueClass)) oldTop3++;
+            if (listContains(p.shadowTop3, r.trueClass)) shadowTop3++;
+            if (DatasetClasses.axisOf(r.trueClass).equals(DatasetClasses.axisOf(r.predicted))) oldAxis++;
+            if (DatasetClasses.axisOf(r.trueClass).equals(DatasetClasses.axisOf(p.shadowFinalClass))) shadowAxis++;
+            inc(shadowDist, p.shadowFinalClass);
+            for (String t : p.shadowTop3) inc(top3Dist, t);
+        }
+
+        String maxClass = "";
+        int maxCount = 0;
+        for (Map.Entry<String,Integer> e : shadowDist.entrySet()) {
+            if (e.getValue() > maxCount) {
+                maxClass = e.getKey();
+                maxCount = e.getValue();
+            }
+        }
+
+        int diversity = 0;
+        for (String k : top3Dist.keySet()) {
+            if (DatasetClasses.isValid(k) && !DatasetClasses.isForbidden(k)) diversity++;
+        }
+
+        float maxShare = total <= 0 ? 0f : maxCount / (float) total;
+
+        StringBuilder b = new StringBuilder();
+        b.append("# Shadow ClassRouter Report\n\n");
+        b.append("Shadow router is report-only. It does not change real prediction.\n\n");
+        b.append("- Total: ").append(total).append('\n');
+        b.append("- Old top1: ").append(oldTop1).append('/').append(total).append(" = ").append(pctText(oldTop1, total)).append('\n');
+        b.append("- Shadow top1: ").append(shadowTop1).append('/').append(total).append(" = ").append(pctText(shadowTop1, total)).append('\n');
+        b.append("- Old top3: ").append(oldTop3).append('/').append(total).append(" = ").append(pctText(oldTop3, total)).append('\n');
+        b.append("- Shadow top3: ").append(shadowTop3).append('/').append(total).append(" = ").append(pctText(shadowTop3, total)).append('\n');
+        b.append("- Old axis: ").append(oldAxis).append('/').append(total).append(" = ").append(pctText(oldAxis, total)).append('\n');
+        b.append("- Shadow axis: ").append(shadowAxis).append('/').append(total).append(" = ").append(pctText(shadowAxis, total)).append('\n');
+        b.append("- Shadow top3 diversity: ").append(diversity).append('\n');
+        b.append("- Shadow max class share: ").append(maxClass).append(" ").append(Math.round(maxShare * 1000f) / 10f).append("%\n\n");
+
+        b.append("## Enable checklist\n\n");
+        b.append(shadowTop1 >= oldTop1 ? "[PASS] " : "[FAIL] ").append("shadow_top1 >= old_top1\n");
+        b.append(shadowTop3 >= oldTop3 ? "[PASS] " : "[FAIL] ").append("shadow_top3 >= old_top3\n");
+        b.append(shadowAxis >= oldAxis ? "[PASS] " : "[FAIL] ").append("shadow_axis >= old_axis\n");
+        b.append(diversity >= 12 ? "[PASS] " : "[FAIL] ").append("shadow_top3_diversity >= 12\n");
+        b.append(maxShare <= 0.30f ? "[PASS] " : "[FAIL] ").append("shadow_sink_collapse <= 30%\n");
+
+        b.append("\n## Shadow prediction distribution\n\n");
+        for (Map.Entry<String,Integer> e : sorted(shadowDist)) {
+            float share = total <= 0 ? 0f : e.getValue() / (float) total;
+            b.append("- ").append(e.getKey()).append(": ").append(e.getValue())
+                    .append('/').append(total)
+                    .append(" = ").append(Math.round(share * 1000f) / 10f).append("%\n");
+        }
+
+        return b.toString();
+    }
+
+    private static boolean listContains(List<String> list, String value) {
+        if (list == null || value == null) return false;
+        for (String s : list) if (value.equals(s)) return true;
+        return false;
+    }
+
     private static String profileAxesCsv(List<AxisRow> rows) {
         StringBuilder b = new StringBuilder();
         b.append("file,true_class,predicted,styleAxis,styleConf,contentAxis,contentConf,purposeAxis,purposeConf,qualityAxis,qualityConf\n");
@@ -837,12 +950,14 @@ private static int get(Map<String,Integer> m, String k) {
         final String file;
         final String trueClass;
         final String predicted;
+        final List<String> oldTop3;
         final ImageProfile profile;
 
-        AxisRow(String file, String trueClass, String predicted, ImageProfile profile) {
+        AxisRow(String file, String trueClass, String predicted, List<String> oldTop3, ImageProfile profile) {
             this.file = file;
             this.trueClass = trueClass;
             this.predicted = predicted;
+            this.oldTop3 = oldTop3 == null ? new ArrayList<String>() : oldTop3;
             this.profile = profile;
         }
     }
