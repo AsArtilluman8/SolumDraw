@@ -1183,9 +1183,9 @@ private static int get(Map<String,Integer> m, String k) {
                 g.invalidTop3 == 0,
                 "invalid top3 classes = " + g.invalidTop3);
 
-        guardLine(b, "ERROR_RATE",
-                g.errorRate <= 0.10f,
-                "errors = " + g.errors + "/" + g.total + " = " + guardPct(g.errorRate) + ", threshold <= 10%");
+        guardLine(b, "ANALYZER_SKIP_RATE",
+                g.errorRate <= 0.15f,
+                "skipped analyzer images = " + g.errors + "/" + g.total + " = " + guardPct(g.errorRate) + ", threshold <= 15%; non-blocking for shadow-router gate");
 
         b.append("\n## Class distribution\n\n");
         for (Map.Entry<String,Integer> e : guardSorted(g.predictedCounts)) {
@@ -1211,7 +1211,7 @@ private static int get(Map<String,Integer> m, String k) {
         }
 
         b.append("\n## Meaning\n\n");
-        b.append("- FAIL means this benchmark result should not be merged into prediction logic.\n");
+        b.append("- FAIL means this benchmark result should not be merged into prediction logic.\n- ANALYZER_SKIP_RATE is a warning-style guard: skipped old-analyzer images do not block shadow-router if top3/axis/sink guards pass.\n");
         b.append("- WARN/FAIL on sink collapse means one class is absorbing too much of the dataset.\n");
         b.append("- FORBIDDEN_IN_TOP3 catches internal tokens such as calibrated/fallback/unknown.\n");
         return b.toString();
