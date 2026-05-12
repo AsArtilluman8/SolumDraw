@@ -10,6 +10,8 @@ import com.solum.draw.vision.VisionDecisionPostProcessor;
 import com.solum.draw.vision.VisionResult;
 import com.solum.draw.vision.profile.DatasetClasses;
 import com.solum.draw.vision.profile.ImageProfile;
+import com.solum.draw.vision.profile.VisualFeatureExtractor;
+import com.solum.draw.vision.profile.VisualFeatureVector;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -75,6 +77,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         if (progress != null) progress.onStart(dataset.getAbsolutePath(), images.size(), labelsFound);
 
         List<ItemResult> items = new ArrayList<>();
+        List<ProfileRow> profileRows = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         int top1 = 0, top3 = 0, missingLabels = 0;
 
@@ -83,6 +86,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
             try {
                 Bitmap bitmap = BitmapFactory.decodeStream(new FileInputStream(img.file));
                 if (bitmap == null) throw new IllegalArgumentException("decode returned null");
+                VisualFeatureVector features = VisualFeatureExtractor.extract(bitmap);
                 ImageAnalysis analysis = ImageAnalyzer.analyze(bitmap, img.relativeName);
                 String oldPredicted = SceneArtHeuristic.correctedGenre(analysis);
                 String note = SceneArtHeuristic.note(analysis);
@@ -102,6 +106,7 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
                 if (ok1) top1++;
                 if (ok3) top3++;
                 items.add(new ItemResult(img.relativeName, img.expected, img.secondary, analysis, oldPredicted, predicted, decision.topLine, decision.reason, ml.provider, note, candidates, ok1, ok3, hasExpected));
+                profileRows.add(new ProfileRow(img.relativeName, img.expected, DatasetClasses.axisOf(img.expected), predicted, DatasetClasses.axisOf(predicted), features, analysis, candidates, ok1, ok3, hasExpected));
             } catch (Exception e) {
                 errors.add(img.relativeName + "\t" + e.getClass().getSimpleName() + "\t" + String.valueOf(e.getMessage()));
             }
@@ -111,6 +116,9 @@ public static final String INPUT_DIR = "SolumDrawTestImages";
         touchImageProfileFoundation();
         Stats stats = buildStats(items);
         writeText(new File(outDir, "benchmark_results.csv"), resultsCsv(items));
+        writeText(new File(outDir, "profile_features.csv"), profileFeaturesCsv(profileRows));
+        writeText(new File(outDir, "profile_predictions.jsonl"), profilePredictionsJsonl(profileRows));
+        writeText(new File(outDir, "feature_summary.json"), featureSummaryJson(profileRows));
         writeText(new File(outDir, "mistakes.csv"), mistakesCsv(items));
         writeText(new File(outDir, "predictions.jsonl"), predictionsJsonl(items));
         writeText(new File(outDir, "benchmark_summary.json"), summaryJson(dataset, images.size(), labelsFound, top1, top3, missingLabels, errors, stats));
@@ -719,6 +727,147 @@ private static int get(Map<String,Integer> m, String k) {
         // Patch 27Q compile guard only. No prediction behavior change.
         ImageProfile ignored = new ImageProfile();
         ignored.resetShadow();
+    }
+
+
+    private static String profileFeaturesCsv(List<ProfileRow> rows) {
+        StringBuilder b = new StringBuilder();
+        b.append("file,true_class,true_axis,predicted,predicted_axis,")
+                .append(VisualFeatureVector.csvHeader())
+                .append(",top1_ok,top3_ok,confidence,top3\n");
+        for (ProfileRow r : rows) {
+            b.append(csv(r.file)).append(',')
+                    .append(csv(r.trueClass)).append(',')
+                    .append(csv(r.trueAxis)).append(',')
+                    .append(csv(r.predicted)).append(',')
+                    .append(csv(r.predictedAxis)).append(',')
+                    .append(r.features.toCsvRow()).append(',')
+                    .append(r.top1Ok).append(',')
+                    .append(r.top3Ok).append(',')
+                    .append(num(r.analysis.confidence)).append(',')
+                    .append(csv(join(r.top3))).append('\n');
+        }
+        return b.toString();
+    }
+
+    private static String profilePredictionsJsonl(List<ProfileRow> rows) {
+        StringBuilder b = new StringBuilder();
+        for (ProfileRow r : rows) {
+            b.append("{")
+                    .append("\"file\":\"").append(esc(r.file)).append("\",")
+                    .append("\"true_class\":\"").append(esc(r.trueClass)).append("\",")
+                    .append("\"true_axis\":\"").append(esc(r.trueAxis)).append("\",")
+                    .append("\"predicted\":\"").append(esc(r.predicted)).append("\",")
+                    .append("\"predicted_axis\":\"").append(esc(r.predictedAxis)).append("\",")
+                    .append("\"features\":{")
+                    .append("\"edgeDensity\":").append(num(r.features.edgeDensity)).append(',')
+                    .append("\"sharpness\":").append(num(r.features.sharpness)).append(',')
+                    .append("\"saturation\":").append(num(r.features.saturation)).append(',')
+                    .append("\"colorEntropy\":").append(num(r.features.colorEntropy)).append(',')
+                    .append("\"glowScore\":").append(num(r.features.glowScore)).append(',')
+                    .append("\"hardLineScore\":").append(num(r.features.hardLineScore)).append(',')
+                    .append("\"computeMs\":").append(r.features.computeTimeMs)
+                    .append("},")
+                    .append("\"top1_ok\":").append(r.top1Ok).append(',')
+                    .append("\"top3_ok\":").append(r.top3Ok).append(',')
+                    .append("\"top3\":\"").append(esc(join(r.top3))).append("\"")
+                    .append("}\n");
+        }
+        return b.toString();
+    }
+
+    private static String featureSummaryJson(List<ProfileRow> rows) {
+        FeatureAgg edge = new FeatureAgg();
+        FeatureAgg sharp = new FeatureAgg();
+        FeatureAgg sat = new FeatureAgg();
+        FeatureAgg entropy = new FeatureAgg();
+        FeatureAgg glow = new FeatureAgg();
+        FeatureAgg hard = new FeatureAgg();
+        FeatureAgg ms = new FeatureAgg();
+
+        for (ProfileRow r : rows) {
+            edge.add(r.features.edgeDensity);
+            sharp.add(r.features.sharpness);
+            sat.add(r.features.saturation);
+            entropy.add(r.features.colorEntropy);
+            glow.add(r.features.glowScore);
+            hard.add(r.features.hardLineScore);
+            ms.add((float) r.features.computeTimeMs);
+        }
+
+        StringBuilder b = new StringBuilder();
+        b.append("{\n");
+        b.append("  \"count\": ").append(rows.size()).append(",\n");
+        appendFeatureJson(b, "edgeDensity", edge, true);
+        appendFeatureJson(b, "sharpness", sharp, true);
+        appendFeatureJson(b, "saturation", sat, true);
+        appendFeatureJson(b, "colorEntropy", entropy, true);
+        appendFeatureJson(b, "glowScore", glow, true);
+        appendFeatureJson(b, "hardLineScore", hard, true);
+        appendFeatureJson(b, "computeMs", ms, false);
+        b.append("\n}\n");
+        return b.toString();
+    }
+
+    private static void appendFeatureJson(StringBuilder b, String name, FeatureAgg a, boolean comma) {
+        b.append("  \"").append(name).append("\": {")
+                .append("\"mean\": ").append(num(a.mean()))
+                .append(", \"min\": ").append(num(a.minValue()))
+                .append(", \"max\": ").append(num(a.maxValue()))
+                .append(", \"zeroRate\": ").append(num(a.zeroRate()))
+                .append("}");
+        if (comma) b.append(',');
+        b.append('\n');
+    }
+
+    private static final class ProfileRow {
+        final String file;
+        final String trueClass;
+        final String trueAxis;
+        final String predicted;
+        final String predictedAxis;
+        final VisualFeatureVector features;
+        final ImageAnalysis analysis;
+        final List<String> top3;
+        final boolean top1Ok;
+        final boolean top3Ok;
+        final boolean hasExpected;
+
+        ProfileRow(String file, String trueClass, String trueAxis, String predicted, String predictedAxis, VisualFeatureVector features, ImageAnalysis analysis, List<String> top3, boolean top1Ok, boolean top3Ok, boolean hasExpected) {
+            this.file = file;
+            this.trueClass = trueClass;
+            this.trueAxis = trueAxis;
+            this.predicted = predicted;
+            this.predictedAxis = predictedAxis;
+            this.features = features;
+            this.analysis = analysis;
+            this.top3 = top3;
+            this.top1Ok = top1Ok;
+            this.top3Ok = top3Ok;
+            this.hasExpected = hasExpected;
+        }
+    }
+
+    private static final class FeatureAgg {
+        int n = 0;
+        int zero = 0;
+        float sum = 0f;
+        float min = Float.MAX_VALUE;
+        float max = -Float.MAX_VALUE;
+
+        void add(float v) {
+            if (Float.isNaN(v) || Float.isInfinite(v)) v = 0f;
+            n++;
+            sum += v;
+            if (v == 0f) zero++;
+            if (v < min) min = v;
+            if (v > max) max = v;
+        }
+
+        float mean() { return n <= 0 ? 0f : sum / n; }
+        float minValue() { return n <= 0 ? 0f : min; }
+        float maxValue() { return n <= 0 ? 0f : max; }
+        float zeroRate() { return n <= 0 ? 0f : zero / (float) n; }
     }
 
     private static String benchmarkGuardsMd(List<ItemResult> items, List<String> errors) {
