@@ -34,6 +34,27 @@ public final class StrokePreviewView extends View {
     private VisionResult mlVisionResult;
     private int previewMode = MODE_SOURCE;
 
+    private boolean liveMode = false;
+    private boolean livePlaying = false;
+    private int liveVisibleActions = 0;
+    private int liveSpeedMultiplier = 1;
+    private long liveStartMs = 0L;
+
+    private final Runnable liveTick = new Runnable() {
+        @Override public void run() {
+            if (!liveMode || !livePlaying || plan == null) return;
+            int batch = Math.max(1, liveSpeedMultiplier * 5);
+            liveVisibleActions = Math.min(plan.actions.size(), liveVisibleActions + batch);
+            invalidate();
+            if (liveVisibleActions < plan.actions.size()) {
+                postDelayed(this, 16L);
+            } else {
+                livePlaying = false;
+                invalidate();
+            }
+        }
+    };
+
     public StrokePreviewView(Context context) {
         super(context);
         paint.setStrokeCap(Paint.Cap.ROUND);
@@ -46,6 +67,11 @@ public final class StrokePreviewView extends View {
         this.analysisOverlay = null;
         this.vision = VisionRegionMap.analyze(sourceImage);
         this.previewMode = MODE_SOURCE;
+        this.plan = null;
+        this.liveMode = false;
+        this.livePlaying = false;
+        this.liveVisibleActions = 0;
+        removeCallbacks(liveTick);
         invalidate();
     }
 
@@ -55,7 +81,66 @@ public final class StrokePreviewView extends View {
         invalidate();
     }
 
-    public void setPlan(StrokePlan plan) { this.plan = plan; invalidate(); }
+    public void setPlan(StrokePlan plan) {
+        this.plan = plan;
+        this.liveMode = false;
+        this.livePlaying = false;
+        this.liveVisibleActions = plan == null ? 0 : plan.actions.size();
+        removeCallbacks(liveTick);
+        invalidate();
+    }
+
+    public String startLivePlan(StrokePlan plan) {
+        this.plan = plan;
+        this.previewMode = MODE_WHITE;
+        this.liveMode = true;
+        this.livePlaying = true;
+        this.liveVisibleActions = 0;
+        this.liveStartMs = System.currentTimeMillis();
+        removeCallbacks(liveTick);
+        post(liveTick);
+        invalidate();
+        return liveStatusText();
+    }
+
+    public String toggleLivePause() {
+        if (plan == null) return "План ещё не построен.";
+        if (!liveMode) {
+            liveMode = true;
+            liveVisibleActions = Math.min(liveVisibleActions, plan.actions.size());
+        }
+        livePlaying = !livePlaying;
+        removeCallbacks(liveTick);
+        if (livePlaying && liveVisibleActions < plan.actions.size()) post(liveTick);
+        invalidate();
+        return liveStatusText();
+    }
+
+    public String cycleLiveSpeed() {
+        if (liveSpeedMultiplier == 1) liveSpeedMultiplier = 2;
+        else if (liveSpeedMultiplier == 2) liveSpeedMultiplier = 4;
+        else if (liveSpeedMultiplier == 4) liveSpeedMultiplier = 8;
+        else liveSpeedMultiplier = 1;
+        if (liveMode && livePlaying) {
+            removeCallbacks(liveTick);
+            post(liveTick);
+        }
+        invalidate();
+        return liveStatusText();
+    }
+
+    public int liveSpeedMultiplier() { return liveSpeedMultiplier; }
+
+    public String liveStatusText() {
+        if (plan == null) return "План ещё не построен.";
+        int total = Math.max(1, plan.actions.size());
+        int pct = Math.round(100f * liveVisibleActions / total);
+        String state = livePlaying ? "LIVE" : (liveVisibleActions >= total ? "ГОТОВО" : "ПАУЗА");
+        long sec = Math.max(0L, (System.currentTimeMillis() - liveStartMs) / 1000L);
+        return state + " x" + liveSpeedMultiplier + " | stroke " + liveVisibleActions + "/" + total + " (" + pct + "%)"
+                + " | " + sec + " сек"
+                + "\nПауза — стоп/продолжить, x2 — скорость, Вид — фон.";
+    }
 
     public void setMlVisionResult(VisionResult result) {
         this.mlVisionResult = result;
@@ -95,6 +180,7 @@ public final class StrokePreviewView extends View {
         if (previewMode == MODE_ML) drawMlVisionOverlay(canvas, dst);
         if (plan != null) drawPlanLayer(canvas, dst);
         drawModeLabel(canvas);
+        if (liveMode && plan != null) drawLiveHud(canvas);
     }
 
     private Bitmap displayImageBase() {
@@ -154,9 +240,6 @@ public final class StrokePreviewView extends View {
     private void drawContours(Canvas canvas, Rect dst) {
         ensureVision();
         if (vision == null) return;
-
-        // Contour mode is now sketch-first:
-        // no route bubbles here, no huge region fills, no mask-rectangle fan.
         drawEdgeSketchSegments(canvas, dst, true);
         drawEdgeSketchSegments(canvas, dst, false);
         drawCompactRegionHints(canvas, dst);
@@ -164,72 +247,39 @@ public final class StrokePreviewView extends View {
 
     private void drawEdgeSketchSegments(Canvas canvas, Rect dst, boolean glow) {
         if (vision == null || vision.gridWidth <= 2 || vision.gridHeight <= 2 || vision.edge == null) return;
-
-        int gw = vision.gridWidth;
-        int gh = vision.gridHeight;
-        float sx = dst.width() / (float) gw;
-        float sy = dst.height() / (float) gh;
-
+        int gw = vision.gridWidth, gh = vision.gridHeight;
+        float sx = dst.width() / (float) gw, sy = dst.height() / (float) gh;
         Path path = new Path();
-        int drawn = 0;
-        int maxSegments = glow ? 4200 : 5200;
-
+        int drawn = 0, maxSegments = glow ? 4200 : 5200;
         for (int y = 1; y < gh - 1; y++) {
             for (int x = 1; x < gw - 1; x++) {
                 int id = y * gw + x;
                 if (!vision.edge[id]) continue;
-
                 int n = 0;
                 if (vision.edge[id - 1]) n++;
                 if (vision.edge[id + 1]) n++;
                 if (vision.edge[id - gw]) n++;
                 if (vision.edge[id + gw]) n++;
-                if (vision.edge[id - gw - 1]) n++;
-                if (vision.edge[id - gw + 1]) n++;
-                if (vision.edge[id + gw - 1]) n++;
-                if (vision.edge[id + gw + 1]) n++;
-
-                // Remove isolated sensor/noise dots.
                 if (n < 2) continue;
-
                 float cx = dst.left + (x + 0.5f) * sx;
                 float cy = dst.top + (y + 0.5f) * sy;
-
-                boolean horizontal = vision.edge[id - 1] || vision.edge[id + 1];
-                boolean vertical = vision.edge[id - gw] || vision.edge[id + gw];
-                boolean diagA = vision.edge[id - gw - 1] || vision.edge[id + gw + 1];
-                boolean diagB = vision.edge[id - gw + 1] || vision.edge[id + gw - 1];
-
-                if (horizontal && drawn < maxSegments) {
+                if (vision.edge[id - 1] || vision.edge[id + 1]) {
                     path.moveTo(cx - sx * 0.55f, cy);
                     path.lineTo(cx + sx * 0.55f, cy);
                     drawn++;
                 }
-                if (vertical && drawn < maxSegments) {
+                if (vision.edge[id - gw] || vision.edge[id + gw]) {
                     path.moveTo(cx, cy - sy * 0.55f);
                     path.lineTo(cx, cy + sy * 0.55f);
                     drawn++;
                 }
-                if (!horizontal && !vertical && diagA && drawn < maxSegments) {
-                    path.moveTo(cx - sx * 0.45f, cy - sy * 0.45f);
-                    path.lineTo(cx + sx * 0.45f, cy + sy * 0.45f);
-                    drawn++;
-                }
-                if (!horizontal && !vertical && diagB && drawn < maxSegments) {
-                    path.moveTo(cx + sx * 0.45f, cy - sy * 0.45f);
-                    path.lineTo(cx - sx * 0.45f, cy + sy * 0.45f);
-                    drawn++;
-                }
-
                 if (drawn >= maxSegments) break;
             }
             if (drawn >= maxSegments) break;
         }
-
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
-
         if (glow) {
             paint.setStrokeWidth(4.6f);
             paint.setColor(Color.argb(34, 34, 230, 242));
@@ -237,48 +287,37 @@ public final class StrokePreviewView extends View {
             paint.setStrokeWidth(1.55f);
             paint.setColor(Color.argb(220, 34, 230, 242));
         }
-
         canvas.drawPath(path, paint);
     }
 
     private void drawCompactRegionHints(Canvas canvas, Rect dst) {
         if (vision == null) return;
-
         RectF df = new RectF(dst);
         int idx = 0;
-
         for (VisionRegionMap.Region r : vision.displayRegions()) {
             RectF rr = r.rectIn(df);
-
-            // Ignore giant background islands and tiny false positives.
             float cover = (rr.width() * rr.height()) / Math.max(1f, dst.width() * dst.height());
             if (cover > 0.52f) continue;
             if (rr.width() < 18 || rr.height() < 18) continue;
-
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(idx == 0 ? 1.8f : 1.1f);
             paint.setColor(idx == 0 ? Color.argb(145, 255, 196, 72) : Color.argb(90, 155, 107, 255));
             canvas.drawRoundRect(rr, 10f, 10f, paint);
-
             idx++;
             if (idx >= 5) break;
         }
     }
 
-
     private void drawMlVisionOverlay(Canvas canvas, Rect dst) {
         if (mlVisionResult == null) return;
-
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.argb(190, 2, 8, 14));
         canvas.drawRoundRect(new RectF(dst.left + 10, dst.top + 10, dst.right - 10, dst.top + 96), 14f, 14f, paint);
-
         paint.setTextAlign(Paint.Align.LEFT);
         paint.setFakeBoldText(false);
         paint.setTextSize(15f);
         paint.setColor(Color.rgb(234, 247, 255));
         canvas.drawText(mlVisionResult.overlayTitleRu(), dst.left + 22, dst.top + 36, paint);
-
         StringBuilder lb = new StringBuilder();
         int labelCount = Math.min(4, mlVisionResult.labels.size());
         for (int i = 0; i < labelCount; i++) {
@@ -286,45 +325,20 @@ public final class StrokePreviewView extends View {
             if (i > 0) lb.append(" · ");
             lb.append(label.text).append(" ").append(Math.round(label.confidence * 100f)).append("%");
         }
-
         paint.setTextSize(13f);
         paint.setColor(Color.rgb(34, 230, 242));
         canvas.drawText(lb.length() == 0 ? "labels пока нет / модель может догружаться" : lb.toString(), dst.left + 22, dst.top + 62, paint);
-
         int idx = 0;
         for (VisionObject object : mlVisionResult.objects) {
             RectF n = object.boxNorm;
-            RectF r = new RectF(
-                    dst.left + n.left * dst.width(),
-                    dst.top + n.top * dst.height(),
-                    dst.left + n.right * dst.width(),
-                    dst.top + n.bottom * dst.height()
-            );
-
+            RectF r = new RectF(dst.left + n.left * dst.width(), dst.top + n.top * dst.height(), dst.left + n.right * dst.width(), dst.top + n.bottom * dst.height());
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(idx == 0 ? 3.2f : 1.6f);
             int boxAlpha = object.mainScore() < 0.28f ? 95 : 230;
             paint.setColor(idx == 0 ? Color.argb(245, 255, 196, 72) : Color.argb(boxAlpha, 34, 230, 242));
             canvas.drawRoundRect(r, 12f, 12f, paint);
-
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(220, 2, 8, 14));
-            RectF tag = new RectF(r.left, Math.max(dst.top + 4, r.top - 30), Math.min(dst.right - 4, r.left + 210), Math.max(dst.top + 34, r.top));
-            canvas.drawRoundRect(tag, 10f, 10f, paint);
-
-            paint.setTextSize(13f);
-            paint.setColor(idx == 0 ? Color.rgb(255, 196, 72) : Color.rgb(34, 230, 242));
-            canvas.drawText((idx + 1) + ". " + object.label + " " + Math.round(object.confidence * 100f) + "%", tag.left + 8, tag.top + 20, paint);
-
             idx++;
             if (idx >= 5) break;
-        }
-
-        if (mlVisionResult.objects.isEmpty()) {
-            paint.setStyle(Paint.Style.FILL);
-            paint.setTextSize(14f);
-            paint.setColor(Color.rgb(255, 196, 72));
-            canvas.drawText("ML Kit не нашёл bbox. Java CV остаётся fallback.", dst.left + 22, dst.top + 84, paint);
         }
     }
 
@@ -347,7 +361,8 @@ public final class StrokePreviewView extends View {
         canvas.save();
         canvas.clipRect(dst);
         canvas.translate(dst.left, dst.top);
-        drawPlan(canvas, plan);
+        int maxCount = liveMode ? liveVisibleActions : (plan == null ? 0 : plan.actions.size());
+        drawPlan(canvas, plan, maxCount);
         canvas.restore();
     }
 
@@ -359,12 +374,51 @@ public final class StrokePreviewView extends View {
         canvas.drawText("SolumDraw — " + previewModeName(), 18f, 34f, paint);
     }
 
+    private void drawLiveHud(Canvas canvas) {
+        if (plan == null) return;
+        RectF box = new RectF(16f, getHeight() - 84f, getWidth() - 16f, getHeight() - 18f);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb(220, 2, 8, 14));
+        canvas.drawRoundRect(box, 14f, 14f, paint);
+        int total = Math.max(1, plan.actions.size());
+        int pct = Math.round(100f * liveVisibleActions / total);
+        paint.setTextAlign(Paint.Align.LEFT);
+        paint.setFakeBoldText(true);
+        paint.setTextSize(15f);
+        paint.setColor(Color.rgb(34, 230, 242));
+        String state = livePlaying ? "LIVE" : (liveVisibleActions >= total ? "DONE" : "PAUSE");
+        canvas.drawText(state + " x" + liveSpeedMultiplier + "  " + liveVisibleActions + "/" + total + "  " + pct + "%", box.left + 14f, box.top + 24f, paint);
+        paint.setFakeBoldText(false);
+        paint.setTextSize(13f);
+        paint.setColor(Color.WHITE);
+        canvas.drawText(currentStageLabel(), box.left + 14f, box.top + 48f, paint);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.rgb(34, 230, 242));
+        float w = (box.width() - 28f) * (liveVisibleActions / (float) total);
+        canvas.drawRoundRect(new RectF(box.left + 14f, box.bottom - 10f, box.left + 14f + w, box.bottom - 5f), 4f, 4f, paint);
+    }
+
+    private String currentStageLabel() {
+        if (plan == null || plan.actions.isEmpty()) return "нет действий";
+        int idx = Math.max(0, Math.min(liveVisibleActions, plan.actions.size() - 1));
+        String st = plan.actions.get(idx).stage;
+        if (st == null) return "drawing";
+        if (st.startsWith("SCULPTOR")) return "SCULPTOR — крупная база";
+        if (st.startsWith("POTTER")) return "POTTER — цветовые штрихи";
+        if (st.startsWith("GRINDER")) return "GRINDER — контуры";
+        if (st.startsWith("POLISHER")) return "POLISHER — акценты";
+        return st;
+    }
+
     private void ensureVision() {
         if (vision == null && sourceImage != null) vision = VisionRegionMap.analyze(sourceImage);
     }
 
-    private void drawPlan(Canvas canvas, StrokePlan plan) {
-        for (StrokeAction action : plan.actions) {
+    private void drawPlan(Canvas canvas, StrokePlan plan, int maxCount) {
+        if (plan == null) return;
+        int n = Math.min(maxCount, plan.actions.size());
+        for (int i = 0; i < n; i++) {
+            StrokeAction action = plan.actions.get(i);
             if (previewMode == MODE_SOURCE && isSuppressedPreviewStroke(action)) continue;
             int color = previewMode == MODE_WHITE ? contrastForWhiteCanvas(action.color) : action.color;
             paint.setColor(color);
@@ -378,8 +432,8 @@ public final class StrokePreviewView extends View {
                 Path path = new Path();
                 PointF first = action.path.get(0);
                 path.moveTo(first.x, first.y);
-                for (int i = 1; i < action.path.size(); i++) {
-                    PointF p = action.path.get(i);
+                for (int j = 1; j < action.path.size(); j++) {
+                    PointF p = action.path.get(j);
                     path.lineTo(p.x, p.y);
                 }
                 canvas.drawPath(path, paint);
@@ -390,7 +444,7 @@ public final class StrokePreviewView extends View {
     private static int contrastForWhiteCanvas(int color) {
         int r = Color.red(color), g = Color.green(color), b = Color.blue(color);
         int luma = (r * 30 + g * 59 + b * 11) / 100;
-        return luma > 210 ? Color.rgb(80, 80, 80) : color;
+        return luma > 218 ? Color.rgb(92, 92, 92) : color;
     }
 
     private static boolean isSuppressedPreviewStroke(StrokeAction action) {

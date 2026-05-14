@@ -30,9 +30,11 @@ import com.solum.draw.debug.RuntimeLog;
 import com.solum.draw.image.SafeBitmapLoader;
 import com.solum.draw.planner.DrawMode;
 import com.solum.draw.planner.HumanStrokePlanner;
+import com.solum.draw.planner.RasterSimilarityPlanner;
 import com.solum.draw.planner.StrokeAction;
 import com.solum.draw.planner.StrokePlan;
 import com.solum.draw.planner.StrokePlanJson;
+import com.solum.draw.planner.LiveRouteJson;
 import com.solum.draw.preview.StrokePreviewView;
 import com.solum.draw.vision.MlKitVisionProbe;
 import com.solum.draw.vision.VisionResult;
@@ -103,6 +105,8 @@ public final class MainActivity extends Activity {
         Button quickBenchButton = button("QuickBench");
         Button fastButton = button("Быстро");
         Button naturalButton = button("Натур.");
+        Button pauseButton = button("Пауза");
+        Button speedButton = button("x2");
         Button exportButton = button("Экспорт");
 
         topBar.addView(importButton);
@@ -114,6 +118,8 @@ public final class MainActivity extends Activity {
         topBar.addView(quickBenchButton);
         drawBar.addView(fastButton);
         drawBar.addView(naturalButton);
+        drawBar.addView(pauseButton);
+        drawBar.addView(speedButton);
         drawBar.addView(exportButton);
 
         previewView = new StrokePreviewView(this);
@@ -133,6 +139,8 @@ public final class MainActivity extends Activity {
         quickBenchButton.setOnClickListener(v -> runAnalyzerQuickBenchmarkWithPermission());
         fastButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_FAST));
         naturalButton.setOnClickListener(v -> buildPlan(DrawMode.HUMAN_NATURAL));
+        pauseButton.setOnClickListener(v -> status.setText(previewView.toggleLivePause()));
+        speedButton.setOnClickListener(v -> status.setText(previewView.cycleLiveSpeed()));
         exportButton.setOnClickListener(v -> exportPlan());
     }
 
@@ -422,17 +430,26 @@ public final class MainActivity extends Activity {
             int width = Math.max(1, imageRect.width());
             int height = Math.max(1, imageRect.height());
             long start = System.currentTimeMillis();
-            StrokePlan basePlan = HumanStrokePlanner.build(sourceImage, mode, width, height);
-            ResidualPlanner.Result residual = ResidualPlanner.addResidualStrokes(sourceImage, basePlan, mode, width, height);
-            currentPlan = residual.plan;
+
+            currentPlan = RasterSimilarityPlanner.build(sourceImage, mode, width, height);
+
             long ms = System.currentTimeMillis() - start;
-            previewView.setPlan(currentPlan);
-            lastReconstructionSummary = residual.summary() + " | " + runVirtualCanvasMetrics(currentPlan);
+            String liveText = previewView.startLivePlan(currentPlan);
             String genre = lastAnalysis == null ? "no-analysis" : SceneArtHeuristic.correctedGenre(lastAnalysis);
-            String summary = "План " + mode.name() + " | жанр=" + genre + " | действий=" + currentPlan.actions.size() + " | " + ms + "ms | Sculptor=" + currentPlan.countStagePrefix("SCULPTOR") + " Potter=" + currentPlan.countStagePrefix("POTTER") + " Grinder=" + currentPlan.countStagePrefix("GRINDER") + " Polisher=" + currentPlan.countStagePrefix("POLISHER") + " | " + residual.summary();
+            String summary = "План " + mode.name() + " | RASTER LIVE | жанр=" + genre
+                    + " | действий=" + currentPlan.actions.size()
+                    + " | build=" + ms + "ms"
+                    + " | Sculptor=" + currentPlan.countStagePrefix("SCULPTOR")
+                    + " Potter=" + currentPlan.countStagePrefix("POTTER")
+                    + " Grinder=" + currentPlan.countStagePrefix("GRINDER")
+                    + " Polisher=" + currentPlan.countStagePrefix("POLISHER")
+                    + "\n\n" + liveText;
             status.setText(summary);
-            RuntimeLog.line("build_plan", summary + " | " + lastReconstructionSummary);
-        } catch (Exception e) { status.setText("План не построился: " + e.getMessage()); }
+            RuntimeLog.line("build_live_raster_plan", summary + " | " + lastReconstructionSummary);
+        } catch (Exception e) {
+            CrashLogger.logHandledError("build_live_raster_plan", e);
+            status.setText("Live-план не построился: " + e.getMessage());
+        }
     }
 
     private String runVirtualCanvasMetrics(StrokePlan plan) {
@@ -457,11 +474,17 @@ public final class MainActivity extends Activity {
     private void exportPlan() {
         if (currentPlan == null) { status.setText("Сначала построй план Fast или Natural."); return; }
         try {
-            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch24.json");
+            File out = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_stroke_plan_patch30c_v2.json");
             FileWriter writer = new FileWriter(out);
             writer.write(StrokePlanJson.toJson(currentPlan));
             writer.close();
-            status.setText("План сохранён: " + out.getAbsolutePath());
+
+            File route = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "solumdraw_live_route_patch30c_v2.json");
+            FileWriter routeWriter = new FileWriter(route);
+            routeWriter.write(LiveRouteJson.toJson(currentPlan, previewView.liveSpeedMultiplier()));
+            routeWriter.close();
+
+            status.setText("Live route сохранён:\n" + route.getAbsolutePath());
         } catch (Exception e) { status.setText("Export не удался: " + e.getMessage()); }
     }
 
